@@ -1,12 +1,9 @@
-# Soresore — Game architecture & context
+# Soresore — Game architecture & handoff
 
-> **For AI agents:** Read this before changing multiplayer, movement, or camera code. Visual/MVP direction lives in `AGENTS.md`. Next.js APIs may differ from training data — check `node_modules/next/dist/docs/` when touching app routing or config.
+> **For AI agents:** Read this before changing multiplayer, movement, or camera code. Visual/MVP direction: `AGENTS.md`. Next.js quirks: `node_modules/next/dist/docs/`.
 
----
-
-## What this is
-
-A **browser-based multiplayer 3D world** (early prototype). Each tab is one player. Positions sync through **Supabase**; other players appear as cubes. Goal long-term: cozy low-poly “world” (see `AGENTS.md`), not a debug scene.
+Browser multiplayer 3D prototype. One tab = one player. Positions sync via **Supabase**; remotes render as cubes. Target: cozy low-poly world (`AGENTS.md`), not a debug scene.
+“Tiny cozy world”. Phase 1 Features: movement, chat, diary, friend.
 
 ---
 
@@ -17,184 +14,158 @@ A **browser-based multiplayer 3D world** (early prototype). Each tab is one play
 | Framework | Next.js 16 (App Router), React 19 |
 | 3D | Three.js, `@react-three/fiber`, `@react-three/drei` |
 | Backend | Supabase (Postgres + Realtime) |
-| Styles | SCSS (`app/globals.scss`, CSS modules) |
 
-Env (`.env`):
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
 ---
 
 ## File map
 
 ```
-app/page.js              → mounts <Game /> in full-viewport canvas container
-component/Game.js        → Canvas, Supabase sync, remote player list, ground plane
-component/LocalPlayer.js → local movement (must be child of <Canvas>)
-component/Player.js      → remote player mesh (box)
-lib/supabase.js          → Supabase client singleton
+app/page.js                 → full-viewport <Game />
+component/Game.js           → Canvas, Supabase sync, mounts systems
+component/LocalPlayer.js    → local input, movement, rotation (useFrame)
+component/RemotePlayer.js   → remote mesh; network vs visual position
+component/FollowCamera.js     → third-person follow (not parented to player)
+component/Environment.js    → ground, fog, lights, shadows
+lib/supabase.js             → Supabase client
+lib/interpolation.js        → smoothRate, lerpPosition (remotes; reusable)
 ```
 
 ---
 
-## Mental model (per browser tab)
+## Per-tab flow
 
 ```
-1. Generate unique playerId (crypto.randomUUID(), stable for tab lifetime)
-2. Move locally every frame (LocalPlayer + useFrame)
-3. Heartbeat to Supabase every SYNC_MS (upsert position + last_seen)
-4. Subscribe to postgres_changes on `players` table (realtime)
-5. Keep local `players` state; render remote cubes from that state
-6. Hide “gone” players via last_seen (client prune) — no server DELETE
+playerId = crypto.randomUUID()
+LocalPlayer → positionRef (every frame)
+Game → upsert positionRef to Supabase every SYNC_MS
+Game → players state from select + realtime postgres_changes
+RemotePlayer → lerps visual position toward network target
+Stale players removed from state via last_seen (no DELETE)
 ```
 
 ```
-┌─────────────┐     upsert (5s)      ┌──────────────┐
-│  Tab A      │ ──────────────────► │   Supabase   │
-│  LocalPlayer│ ◄── realtime ────── │   players    │
-└─────────────┘                     └──────────────┘
-       ▲                                    │
-       │         postgres_changes           │
-       └──────────── Tab B, C, … ───────────┘
+┌─────────────┐   upsert (5s)    ┌──────────────┐
+│ Tab A       │ ───────────────► │  Supabase    │
+│ LocalPlayer │ ◄── realtime ─── │  players     │
+└─────────────┘                  └──────────────┘
+        ▲                               │
+        └──────── other tabs ───────────┘
 ```
 
 ---
 
-## Supabase: `players` table
+## Supabase `players` table
 
-Expected columns:
+| Column | Notes |
+|--------|--------|
+| `id` | uuid PK, client-generated per tab |
+| `x`, `y`, `z` | World position; local spawn `y: 0.5` |
+| `last_seen` | Heartbeat timestamp |
 
-| Column | Type | Notes |
-|--------|------|--------|
-| `id` | uuid (PK) | Client-generated per tab |
-| `x`, `y`, `z` | float | World position; local player starts `y: 0.5` |
-| `last_seen` | timestamptz | Heartbeat timestamp |
-
-**Dashboard setup:**
-
-- Enable **Realtime** for `players` (Database → Replication).
-- RLS: anon can `SELECT` + `INSERT`/`UPDATE` (upsert). **DELETE is intentionally not used** — client cleanup only.
-
-**`players-room` channel:** Not a dashboard object. Arbitrary client-side name for `supabase.channel("players-room").on("postgres_changes", …)`. Listens to row changes on the `players` table.
+- Enable **Realtime** on `players`.
+- RLS: anon `SELECT` + upsert. **No DELETE** — offline = stale `last_seen` + client prune.
+- Channel `players-room`: client name for `postgres_changes` on `players`.
 
 ---
 
-## Timing constants (`Game.js`)
+## Timing (`Game.js`)
 
 | Constant | Value | Role |
 |----------|-------|------|
-| `SYNC_MS` | 5000 | How often local tab upserts position + `last_seen` |
-| `STALE_MS` | 15000 | Hide player if `last_seen` older than this (`> SYNC_MS`) |
-| `PRUNE_MS` | 2000 | Interval to sweep local state and remove stale entries |
+| `SYNC_MS` | 5000 | Local upsert interval |
+| `STALE_MS` | 15000 | Drop if `last_seen` older (`> SYNC_MS`) |
+| `PRUNE_MS` | 2000 | Sweep stale ids from in-memory state |
 
-**Prune** = remove stale ids from **in-memory** `players` state only. Does not delete DB rows. Needed because tab-close DELETE does not work / was removed; time-based heartbeat is the source of “who is online” for the UI.
-
-Stale filtering happens at:
-
-1. Initial load (`select` → skip stale rows)
-2. Realtime handler (ignore or remove stale updates)
-3. `pruneStalePlayers()` on interval
-4. `remotePlayers` render filter
+Prune only clears React state, not DB rows.
 
 ---
 
-## Movement (`LocalPlayer.js`)
+## Local player (`LocalPlayer.js`)
 
-- **Input:** WASD + arrow keys (window `keydown` / `keyup`).
-- **Loop:** `useFrame` from `@react-three/fiber` — **must run inside `<Canvas>`**, not in `Game.js`.
-- **Speed:** fixed `SPEED = 0.05` per frame — **not delta-time aware** (movement speed varies with FPS).
-- **State:** position in `positionRef` (mutable object); mesh updated via `meshRef.current.position.set()` to avoid re-rendering every frame.
-- **Visual:** hotpink box = local player.
+**State:** `positionRef` in `Game.js` (mutable, no per-frame React updates). Mesh via `meshRef` in `useFrame`.
 
-Remote players (`Player.js`): skyblue box, position from React state (updates on sync interval, can feel jumpy).
+**Movement:** camera-relative WASD → world direction → velocity steers toward target with separate **accel** / **decel** (`1 - Math.exp(-rate * delta)`). Position: `pos += vel * delta`.
 
----
+**Camera basis:** `forward` = horizontal camera→player; `right` = `forward × up` → `{ x: -forward.z, z: forward.x }` (wrong cross order reverses strafe).
 
-## Camera & scene (current — debug-like)
+**Rotation:** yaw toward velocity; on reversal (`dot(vel, input) < 0.25`) face **input**; `MAX_TURN_SPEED` caps snap on 180° turns.
 
-- Fixed initial camera: `position: [2, 5, 10]`.
-- **`OrbitControls`** from drei — free orbit, not game-like.
-- Ground: 20×20 gray plane.
-- Lighting: ambient only (`intensity: 1`).
+**Input safety:** clear keys on `blur` and `visibilitychange` (hidden).
 
-This is why it feels like a tech demo, not a world.
+**Tuning:** `MAX_SPEED`, `ACCELERATION`, `DECELERATION`, `ROTATION_SMOOTH`, `MAX_TURN_SPEED` at top of file.
 
 ---
 
-## Important implementation gotchas
+## Remote players (`RemotePlayer.js`)
 
-1. **`useFrame` is from `@react-three/fiber`, not `react`.** Only works under `<Canvas>`.
-2. **Local vs remote split:** Local player is NOT in `players` state; rendered by `<LocalPlayer />`. Remotes filtered with `id !== playerId`.
-3. **Do not rely on Supabase DELETE** for leave/disconnect; use `last_seen` + prune.
-4. **Realtime `event: "*"`** still subscribed; DELETE handler was removed — ghosts handled by heartbeat only.
-5. **Next.js 16** — follow project `AGENTS.md` / `node_modules/next/dist/docs/` for framework quirks.
+**Split:**
+
+| Ref | Updated when | Purpose |
+|-----|----------------|---------|
+| `networkTarget` | `useEffect` on prop change | Latest Supabase position |
+| `visualPosition` | `useFrame` + `lerpPosition` | Rendered mesh position |
+
+`Game.js` `players` state is **network-only** — never bind mesh `position` directly to it.
+
+**Tuning:** `REMOTE_POSITION_SMOOTH` in `lib/interpolation.js` (default `8`).
+
+**Not done:** extrapolation between 5s syncs; faster local upsert rate.
 
 ---
 
-## Visual direction (from `AGENTS.md`)
+## Camera (`FollowCamera.js`)
 
-Target aesthetic: low poly, cozy, evening orange–blue (`#fcb57f`, `#252a37`), chibi proportions, minimal texture. MVP areas: station, riverside, rooftop, minimarket. Moodboard refs under `public/images/moodboard/`.
+- World-space camera (not child of player mesh).
+- Desired offset: above + behind player (`+Z`; W moves toward `-Z`).
+- `camera.position.lerp(desired, smoothRate(POSITION_SMOOTH, delta))`.
+- `camera.lookAt(player)` each frame.
+- Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}` — vertical FOV, slightly tighter than default 75.
+
+**Limitation:** offset is fixed in world space (no orbit / yaw-relative rig yet).
 
 ---
 
-## Next goal: “a world”, not a tech demo
+## Environment (`Environment.js`)
 
-### Problems now
+- Ground 100×100, fog + background `#252a37`, sun `#fcb57f`.
+- Ambient (cool, low) + directional (warm, `castShadow`).
+- `Game.js`: `<Canvas shadows>`; player meshes `castShadow` / `receiveShadow`.
 
-- OrbitControls → editor/debug feel, not player embodiment
-- Instant per-frame movement (no acceleration / smoothing)
-- Remote players snap on 5s sync
-- Flat lighting, placeholder geometry
-- No follow camera
+---
 
-### Desired direction
+## Next steps (suggested)
 
-| Need | Direction |
-|------|-----------|
-| Follow camera | Third-person rig behind/above local player |
-| Smoother movement | Acceleration, maybe camera-relative WASD |
-| Grounded feel | Better ground scale, shadows, environment blocks |
-| Smooth camera | Lerp camera position/look-at each frame |
+1. Contact Feedback. Movement lack of footstep rhythm, bounce, squash, camera sway, shadow tightening, subtle vertical motion. Need tiny “physical lies”.
+2. Ambient Motion. drifting particles, swaying lights, animated fog, floating dust, distant moving cubes, scrolling sky gradient.
+3. Audio. soft wind, low ambient hum, footstep ticks, distant train ambience, UI hover sounds
+4. Character models / animations; replace placeholder boxes.
+5. Add Camera Secondary Motion.
+Very subtle:
+-movement sway
+-slight lag
+-breathing idle
+-acceleration tilt
+Tiny values only.
+This makes camera feel attached to mass.
+6. Add Idle Animation To Player. subtle bob, hover, tilt while moving
+7. Add Footstep Rhythm. 
+Doesn’t need real footsteps. tiny bounce, soft tick sound, rhythmic camera motion. creates grounding.
 
-### Concepts to apply (learning targets)
-
-| Concept | What it means here |
-|---------|-------------------|
-| **Camera rig** | Empty `THREE.Group` or dedicated object: player at origin, camera offset (e.g. behind + up). Move rig with player; camera stays in local offset space. |
-| **Lerping** | `current += (target - current) * alpha` each frame for camera and optionally remote player positions. Use small `alpha` (0.05–0.15) or `1 - Math.exp(-k * delta)`. |
-| **Game feel** | Acceleration/deceleration, slight bob, FOV, input buffering — movement should weight, not teleport. |
-| **Delta time** | `useFrame((state, delta) => …)` — multiply speed by `delta` so motion is **units per second**, not per frame. Essential before tuning `SPEED`. |
-
-### Suggested implementation order (for next agent)
-
-1. Remove `OrbitControls`; add follow camera component using `useFrame` + lerp toward `positionRef`.
-2. Refactor `LocalPlayer` movement to use `delta` and optional velocity lerp.
-3. Lerp remote `Player` positions toward network target in `useFrame`.
-4. Replace placeholder scene pieces incrementally per `AGENTS.md` art direction.
-
-### Camera sketch (third person)
-
-```
-Player mesh
-    ↑
-Camera rig (group at player x,y,z)
-    └── camera offset (0, height, -distance) in rig local space
-useFrame: rig.position.lerp(playerPos); camera lerps to look at player chest
-```
 
 ---
 
 ## Commands
 
 ```bash
-npm run dev    # local dev
-npm run build  # production build
+npm run dev
+npm run build
 ```
 
 ---
 
 ## Changelog (doc)
 
-- Multiplayer via Supabase upsert + realtime; heartbeat `last_seen`; client prune; no DELETE.
-- Local movement in `LocalPlayer`; `useFrame` fix documented above.
+- **Session:** Follow camera, camera-relative movement (accel/decel, turn cap), environment (fog/shadows), remote interpolation (`RemotePlayer` + `lib/interpolation.js`). Removed `Player.js`.
+- Multiplayer: Supabase upsert + realtime; `last_seen` heartbeat; client prune; no DELETE.

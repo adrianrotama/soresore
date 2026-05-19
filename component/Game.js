@@ -1,11 +1,12 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
 import { useMemo, useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import Player from "@/component/Player";
+import RemotePlayer from "@/component/RemotePlayer";
 import LocalPlayer from "@/component/LocalPlayer";
+import FollowCamera from "@/component/FollowCamera";
+import Environment from "@/component/Environment";
 
 const SYNC_MS = 5000;
 // Drop players who haven't heartbeated within this window (should be > SYNC_MS).
@@ -43,6 +44,7 @@ function pruneStalePlayers(players) {
 export default function Game() {
   const playerId = useMemo(() => crypto.randomUUID(), []);
   const myPositionRef = useRef({ x: 0, y: 0.5, z: 0 });
+  // Network-authoritative positions from Supabase (not rendered directly).
   const [players, setPlayers] = useState({});
 
   useEffect(() => {
@@ -125,25 +127,17 @@ export default function Game() {
   );
 
   return (
-    <Canvas camera={{ position: [2, 5, 10] }}>
-      <ambientLight intensity={1} />
-
-      <mesh position={[0, -0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[20, 20]} />
-        <meshStandardMaterial color="#e8e8e8" />
-      </mesh>
-
+    <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
+      <Environment />
+      <FollowCamera targetRef={myPositionRef} />
       <LocalPlayer positionRef={myPositionRef} />
 
-      {remotePlayers.map(([id, pos]) => (
-        <Player
+      {remotePlayers.map(([id, networkPosition]) => (
+        <RemotePlayer
           key={id}
-          position={[pos.x, pos.y, pos.z]}
-          isMe={false}
+          networkPosition={networkPosition}
         />
       ))}
-
-      <OrbitControls />
     </Canvas>
   );
 }
