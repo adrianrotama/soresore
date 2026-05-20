@@ -7,10 +7,11 @@ import RemotePlayer from "@/component/RemotePlayer";
 import LocalPlayer from "@/component/LocalPlayer";
 import FollowCamera from "@/component/FollowCamera";
 import Environment from "@/component/Environment";
+import StationRailProps from "@/component/StationRailProps";
 import GameAudio from "@/component/GameAudio";
 
 // Local upsert interval (see GAME.md timing table).
-const SYNC_MS = 5000;
+const SYNC_MS = 50000;
 // Drop players who haven't heartbeated within this window (should be > SYNC_MS).
 const STALE_MS = 15_000;
 const PRUNE_MS = 2000;
@@ -133,6 +134,7 @@ export default function Game() {
       <GameAudio />
       <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
       <Environment />
+      <StationRailProps start={[-15, 0, -7]} />
       <FollowCamera targetRef={myPositionRef} />
       <LocalPlayer positionRef={myPositionRef} />
 

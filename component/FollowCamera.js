@@ -5,8 +5,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
 // Offset from player: above + behind (+Z; local player moves toward -Z with W).
-const HEIGHT_ABOVE = 3;
-const DISTANCE_BEHIND = 6;
+const HEIGHT_ABOVE = 4;
+const DISTANCE_BEHIND = 8;
 // Higher = snappier follow (frame-rate independent via delta).
 const POSITION_SMOOTH = 9;
 

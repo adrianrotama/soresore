@@ -28,11 +28,15 @@ component/LocalPlayer.js    → local input, movement, bob/squash, footstep tick
 component/RemotePlayer.js   → remote mesh; network vs visual position
 component/FollowCamera.js   → third-person follow (stable; no oscillating sway)
 component/Environment.js    → ground, fog, lights, shadows
+component/EnvironmentModel.js → load one GLB (useGLTF, shadows, ground snap)
+component/StationRailProps.js → station rail slice: track, 3-car train, crossing
 component/GameAudio.js      → unlock Web Audio on first key/pointer; tab mute
 lib/supabase.js             → Supabase client
+lib/environmentModels.js    → GLB URL constants + preload list
 lib/interpolation.js        → smoothRate, lerpPosition (remotes; reusable)
 lib/gameAudio.js            → ambience loop, one-shot footsteps, step phase ticks
 public/audio/               → see Audio section
+public/images/environments/ → Kenney GLBs (see Environment props section)
 ```
 
 ---
@@ -183,24 +187,79 @@ Prune only clears React state, not DB rows.
 
 ---
 
-## Next steps (suggested)
+## Environment props (GLB) — **in progress (station slice)**
 
-**Done (2026-05-20 session):** local bob/squash, stable camera (no sway), ambience + footstep rhythm synced to bob (`2π` step phase), `AGENTS.md` cozy-camera + “challenge cozy trade-offs” agent rules.
+First 3D environment work. Pattern: **`EnvironmentModel`** + URLs in **`lib/environmentModels.js`**.
 
-**Recommended next (pick one PR-sized feature):**
+### Loading pattern (`EnvironmentModel.js`)
 
-1. **One environment slice** — station / riverside / rooftop / minimarket (`AGENTS.md` MVP). Highest “feels like a game” payoff.
-2. **Surface footsteps** — zones on ground → `footstep-grass.wav` vs `footstep-wood.wav`.
-3. **Slow-walk polish** — scale `movePhase` advance by `moving01` so bob + steps slow when barely moving.
-4. **Extra ambience** — rain or station SFX (keep one bed + footsteps; avoid muddy mix).
-5. **Social UI** — chat bubble or diary (needs Supabase design).
+- `useGLTF(url)` from `@react-three/drei` (cached per URL).
+- `scene.clone(true)` per instance; meshes get `castShadow` / `receiveShadow`.
+- Ground snap: subtract bounding-box `min.y` so the model sits on `y = 0`.
+- Props: `position`, `rotation` (radians), `scale` (number or `[x,y,z]`).
 
-**Still open from earlier list:**
+### Assets (`public/images/environments/`)
 
-- Ambient motion (particles, soft light drift) — after a place exists.
-- Character model / emotes — replace cubes.
-- Remote extrapolation or faster sync if remotes feel jumpy at 5s (optional).
-- Shadow tuning, subtle idle tilt (low priority).
+| `ENV_MODELS` key | File | Role |
+|------------------|------|------|
+| `trainHead` | `train-electric-square-a.glb` | Locomotive (Kenney) |
+| `trainCar` | `train-electric-square-b.glb` | Middle car |
+| `trainTail` | `train-electric-square-c.glb` | Tail car |
+| `railStraight` | `railroad-straight.glb` | Track tile |
+| `railCrossing` | `railroad-crossing.glb` | Short crossing (unused in scene) |
+| `railCrossingLong` | `railroad-crossing-long.glb` | Crossing decoration in scene |
+
+### Station layout (`StationRailProps.js`)
+
+Mounted from `Game.js` as:
+
+```jsx
+<StationRailProps start={[-15, 0, -7]} />
+```
+
+**Convention (fixed — do not reintroduce `axis` prop without reason):**
+
+- Track runs along **world +X** (more `RAIL_COUNT` segments extend **right**).
+- Segment `0` at `start`; segment `i` at `start.x + i * SEGMENT_LENGTH`.
+- `SEGMENT_LENGTH = RAIL_SCALE * 2` (currently `RAIL_SCALE = 1.8`).
+- **Train consist:** `TrainConsist` — head / car / tail; spacing via `TRAIN_CAR_SPACING` and `carIndex` in `TRAIN_PARTS` (negative indices used so cars sit correctly behind the head — retune there, not in three separate components).
+- **Crossing:** `railCrossingLong` at `crossingPosition(start)` with small `CROSSING_SCALE` (0.02).
+
+**Tuning lives at the top of `StationRailProps.js`:** `RAIL_COUNT`, `RAIL_SCALE`, `TRAIN_SCALE`, `TRAIN_CAR_SPACING`, `TRAIN_OFFSET`, rotations, `start` default.
+
+**Not done:** spawn point at platform, platform mesh, konbini, animated crossing gates, surface footstep zones.
+
+---
+
+## Handoff — continue here (next session)
+
+**State:** Station rail MVP looks good as a starting point (track + 3-car electric square train + long crossing). Player still spawns at `(0, 0.5, 0)` — walk **D (+X)** and toward **−Z** to reach `start={[-15, 0, -7]}`.
+
+**Recommended order (one PR each):**
+
+1. **Spawn near the train** — set initial `myPositionRef` in `Game.js` beside the consist (e.g. offset from `start`); optional simple platform/plane under rails.
+2. **One landmark prop** — konbini or shelter via `<EnvironmentModel />` + new entry in `environmentModels.js` (Kenney Mini Market or similar).
+3. **Surface footsteps** — box zone on platform/track → `footstep-wood.wav`; grass elsewhere (`lib/gameAudio.js` already has both files).
+4. **Quiet station ambience** — under existing bed; avoid stacking loud loops.
+
+**Defer:** animated crossing, character model, extra biomes, social UI, faster multiplayer sync.
+
+**Removed:** `lib/trackLayout.js` (layout simplified to +X-only + `start` prop).
+
+---
+
+## Next steps (backlog)
+
+**Done (2026-05-20):** local bob/squash, stable camera, ambience + footstep rhythm, cozy-camera rules in `AGENTS.md`.
+
+**Done (2026-05-21):** GLB pipeline (`EnvironmentModel`), station rail slice (`StationRailProps`), Kenney track + electric-square consist + crossing-long; tuned scales/positions.
+
+**Still open:**
+
+- Finish station slice (spawn, platform, konbini) — see Handoff above.
+- Surface footsteps, slow-walk polish, station SFX.
+- Social UI (chat/diary), character/emotes, remote extrapolation (optional).
+- Ambient motion, shadow polish (low priority).
 
 
 ---
@@ -216,6 +275,11 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-05-21 — Station environment slice (first GLBs):**
+  - `EnvironmentModel.js`, `lib/environmentModels.js`, `StationRailProps.js`.
+  - Kenney: straight rails along +X, `train-electric-square` a/b/c as head/car/tail consist, `railroad-crossing-long` decoration.
+  - `Game.js`: `<StationRailProps start={[-15, 0, -7]} />` (tuned layout).
+  - Layout API: only `start` prop; rotations/scales as file-level constants.
 - **2026-05-20 — Feel + audio session:**
   - `LocalPlayer`: idle/move bob, squash/stretch, continuous `movePhase`, `moving01` intensity smoothing; footstep phase hooks.
   - `FollowCamera`: removed sinus sway (comfort); stable lerp follow only.
