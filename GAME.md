@@ -23,13 +23,16 @@ Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
 ```
 app/page.js                 → full-viewport <Game />
-component/Game.js           → Canvas, Supabase sync, mounts systems
-component/LocalPlayer.js    → local input, movement, rotation (useFrame)
+component/Game.js           → Canvas, Supabase sync, mounts <GameAudio />
+component/LocalPlayer.js    → local input, movement, bob/squash, footstep ticks
 component/RemotePlayer.js   → remote mesh; network vs visual position
-component/FollowCamera.js     → third-person follow (not parented to player)
+component/FollowCamera.js   → third-person follow (stable; no oscillating sway)
 component/Environment.js    → ground, fog, lights, shadows
+component/GameAudio.js      → unlock Web Audio on first key/pointer; tab mute
 lib/supabase.js             → Supabase client
 lib/interpolation.js        → smoothRate, lerpPosition (remotes; reusable)
+lib/gameAudio.js            → ambience loop, one-shot footsteps, step phase ticks
+public/audio/               → see Audio section
 ```
 
 ---
@@ -96,6 +99,16 @@ Prune only clears React state, not DB rows.
 
 **Tuning:** `MAX_SPEED`, `ACCELERATION`, `DECELERATION`, `ROTATION_SMOOTH`, `MAX_TURN_SPEED` at top of file.
 
+**Visual “physical lies” (local only — does not affect `positionRef` / Supabase):**
+
+- `movePhaseRef`: continuous phase; advances at `MOVE_BOB_HZ` (default `2.0`).
+- `moving01`: smoothed movement intensity in **0..1** (`moveIntensityRef` lerps toward `speed / MAX_SPEED`). Used for bob/squash strength and footstep gating/volume. Name is shader-style shorthand; consider renaming to `walkIntensity` if refactoring.
+- Idle bob: `sin(time * IDLE_BOB_HZ)`; move bob: `sin(movePhase) * MOVE_BOB_AMP * moving01`.
+- Squash: `(1 - cos(movePhase))` scaled by `moving01`.
+- **Start/stop jitter fix:** constant `MOVE_BOB_HZ` + phase accumulator (do not multiply `time` by a per-frame changing frequency).
+
+**Footstep ticks:** `consumeStepTicks(movePhase, …)` in `lib/gameAudio.js` — one sound per **full bob cycle** (`STEP_PHASE_RADIANS = 2π`). Do not use `π` unless you intentionally want two ticks per bob.
+
 ---
 
 ## Remote players (`RemotePlayer.js`)
@@ -122,8 +135,43 @@ Prune only clears React state, not DB rows.
 - `camera.position.lerp(desired, smoothRate(POSITION_SMOOTH, delta))`.
 - `camera.lookAt(player)` each frame.
 - Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}` — vertical FOV, slightly tighter than default 75.
+- **No sinus sway** (removed — caused motion sickness). Project rule in `AGENTS.md`: cozy default = stable camera; prefer character bob + audio over oscillating view.
 
 **Limitation:** offset is fixed in world space (no orbit / yaw-relative rig yet).
+
+**Not planned by default:** continuous camera sway / head-bob on the view. Optional later: non-oscillating lag on accel/stop only.
+
+---
+
+## Audio
+
+**Assets (`public/audio/`):**
+
+| Path | Use |
+|------|-----|
+| `ambiances/abeto-base.ogg` | Looping ambience (fades in after unlock) |
+| `player/footstep-wood.wav` | Reserved for surface zones (not wired yet) |
+| `player/footstep-grass.wav` | Short one-shot; default wood surface (preferred) |
+| `player/abeto-footsteps.ogg` | Long clip — **do not** use for per-step ticks; trim or ignore |
+
+**Flow:**
+
+1. `GameAudio` — first `keydown` or `pointerdown` calls `unlockGameAudio()` (browser autoplay policy).
+2. `lib/gameAudio.js` — Web Audio API: decode buffers, loop ambience with gain ramp, `playFootstep()` one-shots.
+3. `LocalPlayer` — each frame `consumeStepTicks(movePhase, lastStepIndexRef, moving01)` after advancing phase.
+
+**Tuning (`lib/gameAudio.js`):**
+
+| Constant | Role |
+|----------|------|
+| `FOOTSTEP_VOLUME` | One-shot level |
+| `AMBIENCE_VOLUME` | Loop bed level |
+| `MIN_MOVING_FOR_STEP` | `moving01` threshold: no steps below this; resets step index while idle/slow to avoid catch-up bursts on resume |
+| `STEP_PHASE_RADIANS` | `2π` = one footstep per visual bob cycle |
+
+**Note:** `ensureLoaded()` currently decodes `AUDIO.footstepGrass` into the active footstep buffer. Switch to `footstepWood` when wood is the default again. Surface-based switching = future work (zones + `footstepGrass`).
+
+**Tab hidden:** `setAudioMuted(true)` suspends context and fades ambience out.
 
 ---
 
@@ -137,21 +185,22 @@ Prune only clears React state, not DB rows.
 
 ## Next steps (suggested)
 
-1. Contact Feedback. Movement lack of footstep rhythm, bounce, squash, camera sway, shadow tightening, subtle vertical motion. Need tiny “physical lies”.
-2. Ambient Motion. drifting particles, swaying lights, animated fog, floating dust, distant moving cubes, scrolling sky gradient.
-3. Audio. soft wind, low ambient hum, footstep ticks, distant train ambience, UI hover sounds
-4. Character models / animations; replace placeholder boxes.
-5. Add Camera Secondary Motion.
-Very subtle:
--movement sway
--slight lag
--breathing idle
--acceleration tilt
-Tiny values only.
-This makes camera feel attached to mass.
-6. Add Idle Animation To Player. subtle bob, hover, tilt while moving
-7. Add Footstep Rhythm. 
-Doesn’t need real footsteps. tiny bounce, soft tick sound, rhythmic camera motion. creates grounding.
+**Done (2026-05-20 session):** local bob/squash, stable camera (no sway), ambience + footstep rhythm synced to bob (`2π` step phase), `AGENTS.md` cozy-camera + “challenge cozy trade-offs” agent rules.
+
+**Recommended next (pick one PR-sized feature):**
+
+1. **One environment slice** — station / riverside / rooftop / minimarket (`AGENTS.md` MVP). Highest “feels like a game” payoff.
+2. **Surface footsteps** — zones on ground → `footstep-grass.wav` vs `footstep-wood.wav`.
+3. **Slow-walk polish** — scale `movePhase` advance by `moving01` so bob + steps slow when barely moving.
+4. **Extra ambience** — rain or station SFX (keep one bed + footsteps; avoid muddy mix).
+5. **Social UI** — chat bubble or diary (needs Supabase design).
+
+**Still open from earlier list:**
+
+- Ambient motion (particles, soft light drift) — after a place exists.
+- Character model / emotes — replace cubes.
+- Remote extrapolation or faster sync if remotes feel jumpy at 5s (optional).
+- Shadow tuning, subtle idle tilt (low priority).
 
 
 ---
@@ -167,5 +216,12 @@ npm run build
 
 ## Changelog (doc)
 
-- **Session:** Follow camera, camera-relative movement (accel/decel, turn cap), environment (fog/shadows), remote interpolation (`RemotePlayer` + `lib/interpolation.js`). Removed `Player.js`.
+- **2026-05-20 — Feel + audio session:**
+  - `LocalPlayer`: idle/move bob, squash/stretch, continuous `movePhase`, `moving01` intensity smoothing; footstep phase hooks.
+  - `FollowCamera`: removed sinus sway (comfort); stable lerp follow only.
+  - `lib/gameAudio.js` + `component/GameAudio.js`: Web Audio unlock, looping `abeto-base.ogg`, one-shot footsteps; step ticks at `2π` phase (tuned from `π` — was 2× too fast vs bob).
+  - `Game.js`: mounts `<GameAudio />`; `SYNC_MS` documented as `5000`.
+  - `AGENTS.md`: cozy camera comfort rules; agents should challenge motion-sickness / non-cozy camera tricks.
+  - Assets added under `public/audio/` (see Audio section). `abeto-footsteps.ogg` is not used for ticks.
+- **Earlier:** Follow camera, camera-relative movement (accel/decel, turn cap), environment (fog/shadows), remote interpolation (`RemotePlayer` + `lib/interpolation.js`). Removed `Player.js`.
 - Multiplayer: Supabase upsert + realtime; `last_seen` heartbeat; client prune; no DELETE.

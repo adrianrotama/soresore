@@ -7,7 +7,9 @@ import RemotePlayer from "@/component/RemotePlayer";
 import LocalPlayer from "@/component/LocalPlayer";
 import FollowCamera from "@/component/FollowCamera";
 import Environment from "@/component/Environment";
+import GameAudio from "@/component/GameAudio";
 
+// Local upsert interval (see GAME.md timing table).
 const SYNC_MS = 5000;
 // Drop players who haven't heartbeated within this window (should be > SYNC_MS).
 const STALE_MS = 15_000;
@@ -127,7 +129,9 @@ export default function Game() {
   );
 
   return (
-    <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
+    <>
+      <GameAudio />
+      <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
       <Environment />
       <FollowCamera targetRef={myPositionRef} />
       <LocalPlayer positionRef={myPositionRef} />
@@ -138,6 +142,7 @@ export default function Game() {
           networkPosition={networkPosition}
         />
       ))}
-    </Canvas>
+      </Canvas>
+    </>
   );
 }

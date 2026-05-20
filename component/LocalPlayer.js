@@ -2,6 +2,7 @@
 
 import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
+import { consumeStepTicks } from "@/lib/gameAudio";
 
 const MAX_SPEED = 4;
 // How fast velocity catches the input direction (lower = softer start).
@@ -119,6 +120,18 @@ export default function LocalPlayer({ positionRef }) {
   const keys = useRef({});
   const velocityRef = useRef({ x: 0, z: 0 });
   const lastForwardRef = useRef({ x: 0, z: -1 });
+  const timeRef = useRef(0);
+  const movePhaseRef = useRef(0);
+  const moveIntensityRef = useRef(0);
+  const lastStepIndexRef = useRef(0);
+
+  // Cozy "physical lies" — tiny values only.
+  const IDLE_BOB_AMP = 0.03;
+  const IDLE_BOB_HZ = 0.9;
+  const MOVE_BOB_AMP = 0.05;
+  // Keep movement bob frequency constant to avoid start/stop jitter.
+  const MOVE_BOB_HZ = 1.8;
+  const SQUASH_AMP = 0.035;
 
   useEffect(() => {
     const down = (e) => {
@@ -148,6 +161,8 @@ export default function LocalPlayer({ positionRef }) {
   }, []);
 
   useFrame((_, delta) => {
+    timeRef.current += delta;
+
     const pos = positionRef.current;
     const vel = velocityRef.current;
 
@@ -189,9 +204,30 @@ export default function LocalPlayer({ positionRef }) {
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    mesh.position.set(pos.x, pos.y, pos.z);
-
     const speed = Math.hypot(vel.x, vel.z);
+
+    // Subtle bob + squash for grounding (visual only; does not affect networking).
+    // Smooth the movement intensity so visuals ramp in/out without micro-jitter.
+    const targetIntensity = Math.min(1, speed / MAX_SPEED);
+    moveIntensityRef.current +=
+      (targetIntensity - moveIntensityRef.current) * smoothRate(12, delta);
+    const moving01 = moveIntensityRef.current;
+
+    // Phase is continuous (no per-frame frequency changes).
+    movePhaseRef.current += Math.PI * 2 * MOVE_BOB_HZ * delta;
+    consumeStepTicks(movePhaseRef.current, lastStepIndexRef, moving01);
+
+    const idleBob = Math.sin(timeRef.current * Math.PI * 2 * IDLE_BOB_HZ) * IDLE_BOB_AMP;
+    const moveBob = Math.sin(movePhaseRef.current) * MOVE_BOB_AMP * moving01;
+    const bobY = idleBob + moveBob;
+
+    // Squash when "step" hits (use cos so it's strongest at bob troughs).
+    const squash =
+      (1 - Math.cos(movePhaseRef.current)) * 0.5 * SQUASH_AMP * moving01;
+    mesh.scale.set(1 + squash * 0.25, 1 - squash, 1 + squash * 0.25);
+
+    mesh.position.set(pos.x, pos.y + bobY, pos.z);
+
     const facing = getFacingDirection(vel, speed, worldInput);
 
     if (facing) {
