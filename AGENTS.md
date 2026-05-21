@@ -30,6 +30,8 @@ https://kenney.nl/assets
 https://itch.io/game-assets/free
 https://poly.pizza/?utm_source
 https://sketchfab.com/features/free-3d-models
+Feel free to find outside of link mentioned above.
+Preferably to find Free to use asset.
 
 keywords:
 low poly
@@ -77,5 +79,6 @@ footsteps
 
 - **Don’t just agree**: when a request impacts comfort, clarity, or “cozy” feel, **challenge it with trade-offs** and recommend what famous cozy games typically do.
 - **Bias**: comfort-first and readable motion; “cozy” comes from easing, rhythm, and atmosphere more than camera tricks.
+- **`GAME.md`**: read for architecture; **edit only when the user asks** (usually end-of-day). Do not “fix” `SYNC_MS` (50s upsert is intentional — see `GAME.md` timing).
 
 <!-- END:nextjs-agent-rules -->

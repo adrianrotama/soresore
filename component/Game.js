@@ -6,11 +6,15 @@ import { supabase } from "@/lib/supabase";
 import RemotePlayer from "@/component/RemotePlayer";
 import LocalPlayer from "@/component/LocalPlayer";
 import FollowCamera from "@/component/FollowCamera";
+import PlayerOrbitCamera from "@/component/PlayerOrbitCamera";
 import Environment from "@/component/Environment";
 import StationRailProps from "@/component/StationRailProps";
 import GameAudio from "@/component/GameAudio";
+import { STATION_START, getPlayerSpawn } from "@/lib/stationLayout";
 
-// Local upsert interval (see GAME.md timing table).
+const IS_DEV = process.env.NODE_ENV === "development";
+
+// Intentionally 50s — limits Supabase writes; do not lower without user approval (GAME.md).
 const SYNC_MS = 50000;
 // Drop players who haven't heartbeated within this window (should be > SYNC_MS).
 const STALE_MS = 15_000;
@@ -46,9 +50,31 @@ function pruneStalePlayers(players) {
 
 export default function Game() {
   const playerId = useMemo(() => crypto.randomUUID(), []);
-  const myPositionRef = useRef({ x: 0, y: 0.5, z: 0 });
+  const myPositionRef = useRef(getPlayerSpawn());
+  /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
+  const [useLegacyFollow, setUseLegacyFollow] = useState(false);
   // Network-authoritative positions from Supabase (not rendered directly).
   const [players, setPlayers] = useState({});
+
+  useEffect(() => {
+    if (!IS_DEV) return;
+
+    function onKeyDown(e) {
+      if (e.repeat) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (e.key !== "`" && e.code !== "Backquote" && e.key !== "F2") return;
+
+      setUseLegacyFollow((on) => !on);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     async function loadPlayers() {
@@ -132,18 +158,41 @@ export default function Game() {
   return (
     <>
       <GameAudio />
+      {IS_DEV && useLegacyFollow && (
+        <div
+          style={{
+            position: "fixed",
+            top: 12,
+            left: 12,
+            zIndex: 10,
+            padding: "6px 10px",
+            fontSize: 12,
+            fontFamily: "system-ui, sans-serif",
+            color: "#252a37",
+            background: "rgba(252, 181, 127, 0.92)",
+            borderRadius: 6,
+            pointerEvents: "none",
+          }}
+        >
+          Legacy fixed follow (` or F2 for orbit camera)
+        </div>
+      )}
       <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
-      <Environment />
-      <StationRailProps start={[-15, 0, -7]} />
-      <FollowCamera targetRef={myPositionRef} />
-      <LocalPlayer positionRef={myPositionRef} />
+        <Environment />
+        <StationRailProps start={STATION_START} positionRef={myPositionRef} />
+        {useLegacyFollow ? (
+          <FollowCamera targetRef={myPositionRef} />
+        ) : (
+          <PlayerOrbitCamera positionRef={myPositionRef} />
+        )}
+        <LocalPlayer positionRef={myPositionRef} />
 
-      {remotePlayers.map(([id, networkPosition]) => (
-        <RemotePlayer
-          key={id}
-          networkPosition={networkPosition}
-        />
-      ))}
+        {remotePlayers.map(([id, networkPosition]) => (
+          <RemotePlayer
+            key={id}
+            networkPosition={networkPosition}
+          />
+        ))}
       </Canvas>
     </>
   );

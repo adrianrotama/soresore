@@ -4,28 +4,25 @@ import { Suspense } from "react";
 import { useGLTF } from "@react-three/drei";
 import EnvironmentModel from "@/component/EnvironmentModel";
 import { ENV_MODELS, ENV_MODEL_URLS } from "@/lib/environmentModels";
+import StationHut from "@/component/StationHut";
+import {
+  RAIL_COUNT,
+  RAIL_SCALE,
+  TRAIN_SCALE,
+  CROSSING_SCALE,
+  SEGMENT_LENGTH,
+  TRAIN_OFFSET,
+  TRAIN_CAR_SPACING,
+} from "@/lib/stationLayout";
 
 for (const url of ENV_MODEL_URLS) {
   useGLTF.preload(url);
 }
 
-// Kenney straight tile spacing — tweak until segments meet cleanly.
-const RAIL_COUNT = 8;
-
-const RAIL_SCALE = 1.8;
-const TRAIN_SCALE = 1.8;
-const CROSSING_SCALE = 0.02;
-
-const SEGMENT_LENGTH = RAIL_SCALE * 2;
-
-// Fixed rotations (aligned with +X track in your scene).
+// Kenney rail/train tiles: rotate 90° so tile length runs world +X (see stationLayout STATION_START).
 const RAIL_ROTATION = [0, Math.PI / 2, 0];
 const TRAIN_ROTATION = [0, Math.PI / 2, 0];
 const CROSSING_ROTATION = [0, 0, 0];
-
-const TRAIN_OFFSET = 2;
-// Spacing between car origins along the track (+X); tune if gaps or overlap.
-const TRAIN_CAR_SPACING = TRAIN_SCALE * 2.45;
 
 /** Segment index 0 at start; higher indices extend toward +X (right). */
 function railPosition(start, index) {
@@ -66,9 +63,9 @@ function TrainConsist({ start }) {
 
 function crossingPosition(start) {
   return [
-    start[0] + (RAIL_COUNT * SEGMENT_LENGTH / 2) - 4,
+    start[0] + 20,
     start[1],
-    start[2] + 4,
+    start[2] + 4.5,
   ];
 }
 
@@ -83,9 +80,11 @@ function RailStraight({ start, index }) {
   );
 }
 
-function StationRailPropsInner({ start = [-10, 0, 0] }) {
+function StationRailPropsInner({ start = [-10, 0, 0], positionRef }) {
   return (
     <group name="station-rail-props">
+      <StationHut start={start} positionRef={positionRef} />
+
       {Array.from({ length: RAIL_COUNT }, (_, i) => (
         <RailStraight key={i} start={start} index={i} />
       ))}
@@ -103,15 +102,16 @@ function StationRailPropsInner({ start = [-10, 0, 0] }) {
 }
 
 /**
- * Straight track along +X: segment 0 at `start`, more segments to the right.
- * Train near the start; crossing past the last segment (right end).
+ * Rails along +X from `start`, Kenney train consist, crossing, and StationHut (station-hut.glb).
+ * Hut position / spawn / scale: lib/stationLayout.js (stationHutWorldPosition, etc.).
  *
- * @param {[number, number, number]} start — world position [x, y, z] of the first rail tile
+ * @param {[number, number, number]} start — STATION_START: first rail tile [x, y, z]
+ * @param {{ current: { x: number, y: number, z: number } }} positionRef — local player (door proximity)
  */
-export default function StationRailProps({ start = [-15, 0, 0] }) {
+export default function StationRailProps({ start = [-15, 0, 0], positionRef }) {
   return (
     <Suspense fallback={null}>
-      <StationRailPropsInner start={start} />
+      <StationRailPropsInner start={start} positionRef={positionRef} />
     </Suspense>
   );
 }
