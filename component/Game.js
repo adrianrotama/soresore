@@ -8,9 +8,10 @@ import LocalPlayer from "@/component/LocalPlayer";
 import FollowCamera from "@/component/FollowCamera";
 import PlayerOrbitCamera from "@/component/PlayerOrbitCamera";
 import Environment from "@/component/Environment";
-import StationRailProps from "@/component/StationRailProps";
+import World from "@/component/World";
 import GameAudio from "@/component/GameAudio";
-import { STATION_START, getPlayerSpawn } from "@/lib/stationLayout";
+import { getPlayerSpawn } from "@/lib/stationLayout";
+import { TEST_WORLD } from "@/lib/testWorld";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -179,7 +180,7 @@ export default function Game() {
       )}
       <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
         <Environment />
-        <StationRailProps start={STATION_START} positionRef={myPositionRef} />
+        <World data={TEST_WORLD} positionRef={myPositionRef} />
         {useLegacyFollow ? (
           <FollowCamera targetRef={myPositionRef} />
         ) : (

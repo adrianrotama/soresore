@@ -4,7 +4,7 @@ import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { consumeStepTicks } from "@/lib/gameAudio";
 
-const MAX_SPEED = 4;
+const MAX_SPEED = 10;
 // How fast velocity catches the input direction (lower = softer start).
 const ACCELERATION = 10;
 // How fast velocity bleeds off when keys release (lower = longer coast).
