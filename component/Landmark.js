@@ -1,28 +1,34 @@
 "use client";
 
-import StationRailProps from "@/component/StationRailProps";
-import { STATION_START } from "@/lib/stationLayout";
+import TrainLandmark from "@/component/StationRailProps";
+import { DEFAULT_TRAIN_ROUTE } from "@/lib/trainRoute";
 
 /**
- * One landmark = a hand-placed, non-grid object (station depot, konbini, river).
+ * One landmark = a hand-placed, non-grid object (train, konbini, river).
  *
- * Differs from Decoration: uses world-space placement instead of (gx, gz).
- * Each kind component receives the landmark data + positionRef (for proximity
- * logic like hut doors).
- *
- * Add new kinds here:
- *   { kind: "konbini", position: [x, y, z] }
- *   { kind: "river_curve", position: [...], rotation: [...] }
+ * Train example:
+ *   {
+ *     kind: "train",
+ *     start: [x, y, z],
+ *     end: [x, y, z],
+ *     speed: 8,
+ *     respawnMs: 3000,
+ *   }
  */
 
-function DepotLandmark({ positionRef }) {
-  return (
-    <StationRailProps start={STATION_START} positionRef={positionRef} />
-  );
+function TrainLandmarkEntry({ landmark }) {
+  const route = {
+    start: landmark.start ?? DEFAULT_TRAIN_ROUTE.start,
+    end: landmark.end ?? DEFAULT_TRAIN_ROUTE.end,
+    speed: landmark.speed,
+    respawnMs: landmark.respawnMs,
+  };
+
+  return <TrainLandmark route={route} />;
 }
 
 const LANDMARK_COMPONENTS = {
-  depot: DepotLandmark,
+  train: TrainLandmarkEntry,
 };
 
 export default function Landmark({ landmark, positionRef }) {

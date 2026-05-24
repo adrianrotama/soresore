@@ -7,7 +7,7 @@ import Landmark from "@/component/Landmark";
 /**
  * Renders a world: terrain grid + decorations + landmarks. Single mount in scene.
  *
- * positionRef flows to landmarks for proximity logic (e.g. hut door).
+ * positionRef flows to landmarks when a kind needs player proximity.
  *
  * Later phases extend this with:
  *   - elevation (per-cell level)

@@ -10,8 +10,8 @@ import PlayerOrbitCamera from "@/component/PlayerOrbitCamera";
 import Environment from "@/component/Environment";
 import World from "@/component/World";
 import GameAudio from "@/component/GameAudio";
-import { getPlayerSpawn } from "@/lib/stationLayout";
 import { TEST_WORLD } from "@/lib/testWorld";
+import { TILE_LEVEL_HEIGHT } from "@/lib/world";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -51,7 +51,8 @@ function pruneStalePlayers(players) {
 
 export default function Game() {
   const playerId = useMemo(() => crypto.randomUUID(), []);
-  const myPositionRef = useRef(getPlayerSpawn());
+  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 0 }
+  const myPositionRef = useRef(spawn);
   /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);
   // Network-authoritative positions from Supabase (not rendered directly).
