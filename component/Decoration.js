@@ -43,6 +43,50 @@ function RailCrossingProp() {
   />;
 }
 
+function BushLargeProp() {
+  return <EnvironmentModel url={ENV_MODELS.bushLarge} />;
+}
+
+function BushProp() {
+  return <EnvironmentModel url={ENV_MODELS.bush} />;
+}
+
+function CobbleStoneProp() {
+  return <EnvironmentModel url={ENV_MODELS.cobbleStone} />;
+}
+
+function CobbleStoneLargeProp() {
+  return <EnvironmentModel url={ENV_MODELS.cobbleStoneLarge} />;
+}
+
+function FlowerAProp() {
+  return <EnvironmentModel url={ENV_MODELS.flowerA} />;
+}
+
+function FlowerBProp() {
+  return <EnvironmentModel url={ENV_MODELS.flowerB} />;
+}
+
+function GrassAProp() {
+  return <EnvironmentModel url={ENV_MODELS.grassA} />;
+}
+
+function GrassBProp() {
+  return <EnvironmentModel url={ENV_MODELS.grassB} />;
+}
+
+function HedgeStraightProp() {
+  return <EnvironmentModel url={ENV_MODELS.hedgeStraight} />;
+}
+
+function HedgeStraightLongProp() {
+  return <EnvironmentModel url={ENV_MODELS.hedgeStraightLong} />;
+}
+
+function HedgeCornerProp() {
+  return <EnvironmentModel url={ENV_MODELS.hedgeCorner} />;
+}
+
 /**
  * Add new decoration kinds here:
  *   tree: TreeProp,
@@ -57,6 +101,17 @@ const PROP_COMPONENTS = {
   streetLantern: StreetLanternProp,
   railroadStraight: RailroadStraightProp,
   railCrossing: RailCrossingProp,
+  bushLarge: BushLargeProp,
+  bush: BushProp,
+  cobbleStone: CobbleStoneProp,
+  cobbleStoneLarge: CobbleStoneLargeProp,
+  flowerA: FlowerAProp,
+  flowerB: FlowerBProp,
+  grassA: GrassAProp,
+  grassB: GrassBProp,
+  hedgeStraight: HedgeStraightProp,
+  hedgeStraightLong: HedgeStraightLongProp,
+  hedgeCorner: HedgeCornerProp,
 };
 
 useGLTF.preload(ENV_MODELS.bench);
@@ -66,6 +121,17 @@ useGLTF.preload(ENV_MODELS.treeLarge);
 useGLTF.preload(ENV_MODELS.streetLantern);
 useGLTF.preload(ENV_MODELS.railroadStraight);
 useGLTF.preload(ENV_MODELS.railCrossing);
+useGLTF.preload(ENV_MODELS.bushLarge);
+useGLTF.preload(ENV_MODELS.bush);
+useGLTF.preload(ENV_MODELS.cobbleStone);
+useGLTF.preload(ENV_MODELS.cobbleStoneLarge);
+useGLTF.preload(ENV_MODELS.flowerA);
+useGLTF.preload(ENV_MODELS.flowerB);
+useGLTF.preload(ENV_MODELS.grassA);
+useGLTF.preload(ENV_MODELS.grassB);
+useGLTF.preload(ENV_MODELS.hedgeStraight);
+useGLTF.preload(ENV_MODELS.hedgeCorner);
+useGLTF.preload(ENV_MODELS.hedgeStraightLong);
 
 /**
  * Render one decoration at a grid cell, lifted to the cell's surface Y.

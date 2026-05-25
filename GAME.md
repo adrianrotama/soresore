@@ -59,7 +59,7 @@ lib/supabase.js             → Supabase client
 lib/world.js                → surfaceYAt, cellSurfaceWorld, TILE_LEVEL_HEIGHT, normalizeCell
 lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld helper
 lib/tileModels.js           → TILE_PALETTES per tile type; single pedestal GLB URL
-lib/testTileMap.js          → 24×18 test layout (grass/dirt/path station strip)
+lib/testTileMap.js          → 24×28 test layout (grass/dirt/path/asphalt station strip)
 lib/testWorld.js            → bundles { map, origin, decorations, landmarks }
 lib/trainRoute.js           → DEFAULT_TRAIN_ROUTE, path sampling, fade/exit helpers
 lib/environmentModels.js    → GLB/GLTF URL constants + preload list
@@ -248,6 +248,13 @@ Pattern: **`EnvironmentModel`** + URLs in **`lib/environmentModels.js`**. Decora
 | `tree` | `tree.gltf` | Decoration |
 | `treeLarge` | `tree_large.gltf` | Decoration |
 | `streetLantern` | `street_lantern.gltf` | Decoration |
+| `bush` / `bushLarge` | `bush.gltf` / `bush_large.gltf` | Decoration |
+| `cobbleStone` / `cobbleStoneLarge` | `cobble_stones*.gltf` | Decoration (ground scatter) |
+| `flowerA` / `flowerB` | `flower_*.gltf` | Decoration |
+| `grassA` / `grassB` | `grass_*.gltf` | Decoration (clump) |
+| `hedgeStraight` / `hedgeStraightLong` / `hedgeCorner` | `hedge_*.gltf` | Decoration (park borders) |
+
+Kenney nature/hedge props ship as `.gltf` + `.bin` under `public/images/environments/` (same loader as Tiny Treats).
 
 ### Train landmark (`lib/trainRoute.js` + `TrainConsist.js`)
 
@@ -292,7 +299,7 @@ No procedural track — place in `testWorld.js` like other props.
 - Tuned in `RailCrossingProp`: `scale={0.02}` (asset is large in file units — do not copy straight-rail scale).
 - Optional `rotation` / `offset` on the decoration entry for path junctions.
 
-**Station tile paint (`testTileMap.js`):** dirt band under track (`gz` 4–5), path platform for player (`gz` 9–10) and vertical path strip (`gx` 8–10). Map **24×18**, origin `[-10, 0, -20]`.
+**Station tile paint (`testTileMap.js`):** dirt train bed (`gz` 4–5), **asphalt** center strip (`gx` 8–10, rows 2–16), **path** platforms and crossings around it; player spawn row ~`gz` 9. Map **24×28**, origin `[-10, 0, -20]`.
 
 ### Decorations (`component/Decoration.js`)
 
@@ -307,8 +314,13 @@ Grid props via `{ kind, gx, gz, rotation?, scale?, offset? }` in `testWorld.js`.
 | `streetLantern` | Tiny Treats street lantern |
 | `railroadStraight` | Kenney straight; see Manual rails above |
 | `railCrossing` | Kenney long crossing; `scale` 0.02 in component |
+| `bush` / `bushLarge` | Tiny Treats shrubs |
+| `cobbleStone` / `cobbleStoneLarge` | Tiny Treats ground stones (near crossings in `testWorld.js`) |
+| `flowerA` / `flowerB` | Tiny Treats flowers |
+| `grassA` / `grassB` | Tiny Treats grass clumps |
+| `hedgeStraight` / `hedgeStraightLong` / `hedgeCorner` | Tiny Treats hedges (mini-park border in `testWorld.js`) |
 
-Add a kind: register in `PROP_COMPONENTS`, add URL to `ENV_MODELS`, preload with `useGLTF.preload`, declare in `testWorld.js`.
+Per-entry `rotation`, `scale`, and `offset` on the decoration object (see `DecorationInner`). Add a kind: register in `PROP_COMPONENTS`, add URL to `ENV_MODELS`, preload with `useGLTF.preload`, declare in `testWorld.js`.
 
 **Not done:** animated crossing gates; surface footstep zones; konbini landmark; station hut landmark (GLB on disk, not wired).
 
@@ -343,7 +355,7 @@ Source: `public/images/tiles/kenney_platformer-kit/block-grass-large.glb` (Kenne
 
 - `TileModel` clones geometry per cell, classifies vertices by Y position (`TILE_TOP_Y_RATIO = 0.8`), paints top/side colors.
 - Material: `MeshToonMaterial` with `vertexColors: true` — stepped cel-shading; sides don't crush to black under warm sunset light.
-- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `stone`. Side stays unified tan for grass/path/sand so the silhouette reads as one continuous bank.
+- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `concrete`. Side stays unified tan for grass/path/sand; asphalt/concrete use muted grey tops for the station strip. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
 
 ### Decorations vs Landmarks
 
@@ -381,19 +393,19 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 ## Handoff — continue here (next session)
 
-**State (2026-05-23, station layout pass):** **Horizontal cozy station strip** on a **24×18** tile map: dirt track bed, path platform + crossing paths, manual Kenney straights (6 segments, 4-cell spacing) and **two `railCrossing` props** at path junctions. Straight **train** landmark on the dirt line (`z ≈ -10`). Tiny Treats props (bench, trashcan, trees, lantern) on the platform — no debug markers. Hut / rail loop / depot still removed.
+**State (2026-05-25, station + mini-park):** **24×28** tile map: dirt train bed, **asphalt** center strip, path platforms/crossings (see `testTileMap.js`). Manual rails + two crossings unchanged. **Kenney & Tiny Treats decoration set** (bushes, cobbles, flowers, grass clumps, hedges) registered in `Decoration.js` / `environmentModels.js`; **mini-park** cluster at `gx≈0, gz≈6` in `testWorld.js` (hedge border + Tiny Treats bench/trees/lantern). Straight **train** landmark on dirt line. Hut / rail loop / depot still removed.
 
 **Architecture lock-in:** `<World data={TEST_WORLD} positionRef={…} />` is the single world root. Everything goes through:
 - `data.map` — terrain grid (`string` or `{ type, level }`)
 - `data.decorations` — grid-anchored props (including manual rails)
 - `data.landmarks` — world-anchored structures (train today; konbini/river/hut later)
 
-**Verified working (2026-05-23):**
-- 24×18 tile patch: grass / dirt track band / path platform (toon shading).
+**Verified working (2026-05-25):**
+- 24×28 tile patch: grass / dirt / path / asphalt (toon shading).
 - Train runs straight `start` → `end`, snake enter/exit with opacity fade; rail length matches route.
 - Manual rails + crossings placed via decorations; fractional grid coords for props.
 - Player spawn at `y = 1.5` on path near world origin.
-- Decoration GLTFs + Kenney GLBs load via `EnvironmentModel`.
+- Decoration GLTFs/GLBs (Tiny Treats + Kenney nature) load via `EnvironmentModel`.
 
 **Recommended order (priority — one PR each):**
 
@@ -433,6 +445,8 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-23, later):** Station layout pass — 24×18 `testTileMap` (dirt track band + path platform); manual `railroadStraight` (6 segments, 4-cell spacing) + `railCrossing` at path junctions; markers removed; `getCell` floors fractional `gx`/`gz` for decoration Y.
 
+**Done (2026-05-25):** Expanded map to **24×28**; `asphalt` tile palettes; Kenney decoration kinds + mini-park in `testWorld.js`.
+
 **Still open (prioritized — see Handoff for full order):**
 
 1. Phase 2 — Elevation rendering (tile at `level * H`).
@@ -458,6 +472,10 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-05-25 — Tile palettes + Kenney decorations:**
+  - `lib/testTileMap.js`: 24×28 map; asphalt center column; path/dirt layout retuned.
+  - `lib/environmentModels.js` + `component/Decoration.js`: bush, cobble, flower, grass clump, hedge kinds; preloads.
+  - `lib/testWorld.js`: mini-park decorations (`MiniParkDecorations`); cobbles/grass near crossings.
 - **2026-05-23 — Station layout + manual rails (commit wrap):**
   - `lib/testTileMap.js`: 24×18 map; dirt rows under train; path platform (player `gz` 9–10) and vertical path strip (`gx` 8–10).
   - `lib/testWorld.js`: six `railroadStraight` at `gz: 4.5`, `gx` step 4; two `railCrossing` props; platform props (bench, trashcan, trees, lantern); markers removed.
