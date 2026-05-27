@@ -33,14 +33,7 @@ export default function Environment() {
         shadow-bias={-0.0003}
       />
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[GROUND_SIZE, GROUND_SIZE]} />
-        <meshStandardMaterial
-          color={GROUND_COLOR}
-          roughness={0.9}
-          metalness={0.05}
-        />
-      </mesh>
+      
     </>
   );
 }
