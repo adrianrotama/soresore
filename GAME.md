@@ -42,8 +42,9 @@ Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 app/page.js                 → full-viewport <Game />
 component/Game.js           → Canvas, Supabase sync, spawn, mounts <World> + <GameAudio />
 component/World.js          → mounts <TileMap> + <Decoration>s + <Landmark>s (single world root)
-component/TileMap.js        → renders 2D map array via <TileModel> per cell
+component/TileMap.js        → renders 2D map array via <TileModel> per cell; adds cliff-face `TileBank`
 component/TileModel.js      → load pedestal GLB, repaint vertex colors per palette, toon material
+component/StairTile.js      → procedural 4-step stair block (one level rise), rotation-able
 component/Decoration.js     → grid-anchored prop registry ({ kind, gx, gz, rotation? })
 component/Landmark.js       → world-anchored structure registry ({ kind, … })
 component/TrainConsist.js   → 3-car train: straight route, snake enter/exit, opacity fade
@@ -59,7 +60,7 @@ lib/supabase.js             → Supabase client
 lib/world.js                → surfaceYAt, cellSurfaceWorld, TILE_LEVEL_HEIGHT, normalizeCell
 lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld helper
 lib/tileModels.js           → TILE_PALETTES per tile type; single pedestal GLB URL
-lib/testTileMap.js          → 24×28 test layout (grass/dirt/path/asphalt station strip)
+lib/testTileMap.js          → station + coastline layout (grass/path/asphalt/brick/sand, stairs, multi-level)
 lib/testWorld.js            → bundles { map, origin, decorations, landmarks }
 lib/trainRoute.js           → DEFAULT_TRAIN_ROUTE, path sampling, fade/exit helpers
 lib/environmentModels.js    → GLB/GLTF URL constants + preload list
@@ -253,6 +254,9 @@ Pattern: **`EnvironmentModel`** + URLs in **`lib/environmentModels.js`**. Decora
 | `flowerA` / `flowerB` | `flower_*.gltf` | Decoration |
 | `grassA` / `grassB` | `grass_*.gltf` | Decoration (clump) |
 | `hedgeStraight` / `hedgeStraightLong` / `hedgeCorner` | `hedge_*.gltf` | Decoration (park borders) |
+| `vendingMachine` | `vending_machine.glb` | Decoration (coastline lookout) |
+| `railing` | `railing.glb` | Decoration (lookout sea-edge handrail) |
+| `tactilePaving` / `crosswalkStripe` | inline `FlatStripProp` (no GLB) | Painted road overlays |
 
 Kenney nature/hedge props ship as `.gltf` + `.bin` under `public/images/environments/` (same loader as Tiny Treats).
 
@@ -319,6 +323,10 @@ Grid props via `{ kind, gx, gz, rotation?, scale?, offset? }` in `testWorld.js`.
 | `flowerA` / `flowerB` | Tiny Treats flowers |
 | `grassA` / `grassB` | Tiny Treats grass clumps |
 | `hedgeStraight` / `hedgeStraightLong` / `hedgeCorner` | Tiny Treats hedges (mini-park border in `testWorld.js`) |
+| `vendingMachine` | User-supplied GLB; placed on coastline lookout in `testWorld.js` |
+| `railing` | User-supplied GLB; lookout sea-edge handrail |
+| `tactilePaving` | Inline yellow strip (`#e8c44a`) — Japan-style curb edge. Reusable `FlatStripProp` helper |
+| `crosswalkStripe` | Inline white strip (`#f0ece4`); place several at the player's natural crossing |
 
 Per-entry `rotation`, `scale`, and `offset` on the decoration object (see `DecorationInner`). Add a kind: register in `PROP_COMPONENTS`, add URL to `ENV_MODELS`, preload with `useGLTF.preload`, declare in `testWorld.js`.
 
@@ -348,6 +356,25 @@ surfaceYAt    single source of truth for ground Y (decorations + future player s
 - **Height:** 1.0 m (`TILE_LEVEL_HEIGHT`).
 - **Pivot:** bottom-center, origin on ground (mesh top at `+1`).
 - **Vertex colors only:** no PBR. `TileModel` discards the original `colormap` texture and bakes fresh vertex colors per palette at load.
+- **Cell shape:** `string` shorthand (`"grass"`) or `{ type, level?, rotation? }`. `level` is an integer Y multiplier (positive = raised, negative = sunken). `rotation` is used by stair tiles.
+
+### Cliff face (`TileBank` in `TileMap.js`)
+
+Every cell renders a flat-sided box ("bank") beneath its tile painted in the palette `side` color:
+
+- Always extends **one level below** the tile (hides rounded-pedestal seams between same-level neighbors).
+- For raised tiles (`level > 0`), extends all the way down to `Y = 0` — replaces a stack of filler pedestals.
+- Uses `BoxGeometry` not the pedestal GLB, so no rounded curve at top/bottom.
+
+The bank covers both `TileModel` and `StairTile` cases uniformly (stair has no internal skirt; the bank handles its column too).
+
+### Stair tile (`component/StairTile.js`)
+
+- Procedural 4-step block (will swap to a Kenney wedge/stair GLB at `/images/tiles/stair.glb` later — `STAIR_TILE_URL` already defined in `tileModels.js`).
+- Cell form: `{ type: "stair", level, rotation }` — `level` is the **bottom** step; the stair climbs from `level` to `level + 1`.
+- Rotation is the climb direction (0 = climb toward `+Z`, π/2 = toward `+X`, etc.). Test map uses `stairUpW(level)` / `stairUpE(level)` helpers.
+- For a 2-level descent, **stack two stairs at consecutive levels** (e.g. brick 0 → stair at level 0 → mid −1 → stair at level −1 → sand −2).
+- `surfaceYAt` on a stair returns the **upper landing** (`(level + 2) × H`), so decorations dropped on a stair cell sit on top.
 
 ### Palette per tile type (one GLB, many types)
 
@@ -355,7 +382,7 @@ Source: `public/images/tiles/kenney_platformer-kit/block-grass-large.glb` (Kenne
 
 - `TileModel` clones geometry per cell, classifies vertices by Y position (`TILE_TOP_Y_RATIO = 0.8`), paints top/side colors.
 - Material: `MeshToonMaterial` with `vertexColors: true` — stepped cel-shading; sides don't crush to black under warm sunset light.
-- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `concrete`. Side stays unified tan for grass/path/sand; asphalt/concrete use muted grey tops for the station strip. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
+- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `stair`, `brick`. Side stays unified tan for grass/path/sand/stair; brick uses a warm clay side (`#b07a5a`); asphalt uses muted grey. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
 
 ### Decorations vs Landmarks
 
@@ -384,45 +411,47 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 ### Not done (phases — see Handoff for priority)
 
-- **Phase 2 — Elevation rendering:** position each tile at `cell.level * TILE_LEVEL_HEIGHT`.
-- **Phase 3 — Slopes:** ramp tile type connecting two levels (4 rotations).
+- ~~**Phase 2 — Elevation rendering**~~ ✅ done 2026-05-27.
+- ~~**Phase 3 — Slopes/stairs**~~ ✅ done 2026-05-27 (procedural; GLB swap pending).
 - **Phase 4 — Player ground-snap:** `LocalPlayer` reads `surfaceYAt` for its cell.
-- **Phase 5 — Walkability rules:** `canMoveTo(world, from, to)` blocks cliff jumps; allows slope-adjacent.
+- **Phase 5 — Walkability rules:** `canMoveTo(world, from, to)` blocks cliff jumps; allows stair-adjacent.
+- **Phase 6 — Tile rendering optimization** (new): InstancedMesh for pedestal + bank, merged geometry for plateau interiors, taller-cliff GLB shapes.
 
 ---
 
 ## Handoff — continue here (next session)
 
-**State (2026-05-25, station + mini-park):** **24×28** tile map: dirt train bed, **asphalt** center strip, path platforms/crossings (see `testTileMap.js`). Manual rails + two crossings unchanged. **Kenney & Tiny Treats decoration set** (bushes, cobbles, flowers, grass clumps, hedges) registered in `Decoration.js` / `environmentModels.js`; **mini-park** cluster at `gx≈0, gz≈6` in `testWorld.js` (hedge border + Tiny Treats bench/trees/lantern). Straight **train** landmark on dirt line. Hut / rail loop / depot still removed.
+**State (2026-05-27, coastline strip):** Map now layered north→south as **station → mini-park → train → road → coastline lookout → beach**. Multi-level terrain works (sand at `level: -1` / `-2`, brick lookout at `level: 0` flanked by stairs descending into sand). Brick tile palette + `TileBank` cliff plug + procedural `StairTile` are all live. Coastline lookout has railing + benches + vending machine + lanterns + trash. Sidewalk/road boundary has tactile-paving strip; crosswalk stripes at the player crossing.
 
-**Architecture lock-in:** `<World data={TEST_WORLD} positionRef={…} />` is the single world root. Everything goes through:
-- `data.map` — terrain grid (`string` or `{ type, level }`)
-- `data.decorations` — grid-anchored props (including manual rails)
-- `data.landmarks` — world-anchored structures (train today; konbini/river/hut later)
+**Architecture lock-in:** unchanged. `<World data={TEST_WORLD} />` is the single world root; cells are `string` or `{ type, level?, rotation? }`. `normalizeCell` returns `{ type, level, rotation }` always.
 
-**Verified working (2026-05-25):**
-- 24×28 tile patch: grass / dirt / path / asphalt (toon shading).
-- Train runs straight `start` → `end`, snake enter/exit with opacity fade; rail length matches route.
-- Manual rails + crossings placed via decorations; fractional grid coords for props.
-- Player spawn at `y = 1.5` on path near world origin.
-- Decoration GLTFs/GLBs (Tiny Treats + Kenney nature) load via `EnvironmentModel`.
+**Verified working (2026-05-27):**
+- Phase 2 elevation: any integer `level` (positive, zero, negative) renders correctly.
+- Phase 3 stairs: `stairUpW(level)` / `stairUpE(level)` helpers in `testTileMap.js`; two-stair stack bridges `level 0 → -1 → -2`.
+- Cliff face: `TileBank` box eliminates rounded-pedestal gaps at every level transition; raised tiles get one tall bank instead of stacked pedestals.
+- Coastline GLBs (`vending_machine.glb`, `railing.glb`) wired via `Decoration.js`; preloaded.
+- Inline overlay decorations (`tactilePaving`, `crosswalkStripe`) via reusable `FlatStripProp`.
+
+**Open bugs (carry over):**
+- **"World objects rendered below tiles" bug** — at least one decoration occasionally renders below grade. Likely causes: (a) fractional `gx`/`gz` falling into adjacent lower-level cell via `Math.floor` in `getCell`, (b) decoration sitting in a tile's bank column rather than on the higher neighbor's surface. Reproduce + identify the prop before fixing.
+- **Render cost doubled per cell** (pedestal + bank). Fine at 24×28 but won't scale to larger maps. Migrate to `InstancedMesh` in Phase 6.
+- **`StairTile` is procedural.** Functional but uses 4 separate boxes per stair. Swap to a Kenney wedge GLB at `STAIR_TILE_URL` (`/images/tiles/stair.glb`) when sourced.
 
 **Recommended order (priority — one PR each):**
 
-1. **Phase 2 — Elevation rendering** *(small, highest value)*. Update `TileMap` to position each tile at `cell.level * TILE_LEVEL_HEIGHT`. Decorations auto-lift via `surfaceYAt`.
-2. **Phase 3 — Slope tiles**. One wedge GLB + four rotations.
-3. **Phase 4 — Player ground-snap**. `LocalPlayer` reads `surfaceYAt` per cell; smooth Y.
-4. **Phase 5 — Walkability rules**. `canMoveTo` blocks cliff jumps without slopes.
-5. **Station hut landmark** (optional). `station-hut-2.glb` still in `public/`; re-wire proximity door as landmark (old `StationHut.js` removed).
-6. **Convert `.gltf` props to `.glb`**; centralize rail scale constants if tuning continues.
+1. **PR 4 — Phase 4: player ground-snap.** `LocalPlayer` reads `surfaceYAt(world, gx, gz)` per frame, lerps Y. Stair cell's `surfaceYAt` returns the upper landing — fine as a first pass; gradient interpolation comes later. Lets the player actually climb the coastline stairs.
+2. **PR 5 — Phase 5: walkability rules.** `canMoveTo(world, from, to)` in `lib/world.js`. Block cliff jumps (`level diff > 0` between non-stair neighbors). Permit movement through stair tiles in the climb direction only.
+3. **PR 6 — Tile rendering optimization.** Migrate `TileBank` and pedestal to `InstancedMesh` grouped by palette + height. Optional: cliff-shape GLB at heights `2H` / `3H` to avoid tall bank boxes. Goal: <50 draw calls for a 40×40 map.
+4. **PR 7 — Coastline polish.** Tetrapod GLB, concrete utility pole + drooping wire, pine tree variant, Japanese road signs. Trim tactile paving to skip lookout cutout. Crosswalk visual tuning. Investigate "objects below tiles" bug here once we have a reliable repro.
+5. **PR 8 — Konbini landmark.** Beach-side konbini (small convenience store) as a `Landmark` kind. Re-use the dormant `station-hut-2.glb` loader pattern. Proximity door, interior camera preset.
+6. **PR 9 — Stair GLB swap.** Replace procedural `StairTile` with a Kenney Platformer Kit wedge at `/images/tiles/stair.glb`. Use `TileModel` loader for vertex repaint.
+7. **PR 10 — Tile dressing overlays.** Lane stripes (white) and yellow centerline on asphalt; brick joint pattern on sidewalks; subtle drop-shadow planes under props. Builds on `FlatStripProp`.
 
-**Defer:**
-- Surface footsteps — wait for Phase 4.
-- Konbini landmark.
-- Procedural rail loop.
-- Station ambience SFX; character + emotes; social UI; remote extrapolation.
-
-**Optional polish:** retune `STALE_MS` > `SYNC_MS` for multiplayer testing; soft AO under props; `railCrossing` preload URL matches loaded mesh (`railCrossingLong`).
+**Defer (still parked):**
+- Surface-based footsteps (wait for Phase 4).
+- Procedural rail loop / second train on the coastline (one train confirmed sufficient).
+- Station hut re-wire (`station-hut-2.glb`).
+- Remote extrapolation; chat/diary social UI; character + emotes; station SFX.
 
 **Naming:**
 - Tile-level: `tileGrid.js`, `tileModels.js`, `TileMap`, `TileModel`.
@@ -447,16 +476,18 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-25):** Expanded map to **24×28**; `asphalt` tile palettes; Kenney decoration kinds + mini-park in `testWorld.js`.
 
+**Done (2026-05-27):** Phase 2 elevation rendering (`TileMap` reads `cell.level`); Phase 3 stair tiles (`StairTile.js` + `stairUpW`/`stairUpE` helpers, multi-level descents); `TileBank` cliff face (square-edge box plug under every tile, fixes rounded-pedestal gaps); brick tile palette tuned for anime-pedestrian look; coastline strip (road dressing — tactile paving + crosswalk stripes, lookout cluster — railing/bench/vending/lanterns/trash); `vending_machine.glb` + `railing.glb` wired; inline `FlatStripProp` helper.
+
 **Still open (prioritized — see Handoff for full order):**
 
-1. Phase 2 — Elevation rendering (tile at `level * H`).
-2. Phase 3 — Slopes.
-3. Phase 4 — Player ground-snap via `surfaceYAt`.
-4. Phase 5 — Walkability rules (`canMoveTo`).
-5. Station hut landmark (optional); convert props to `.glb`.
-6. Surface footsteps; konbini landmark; station SFX.
-7. Social UI (chat/diary), character/emotes, remote extrapolation.
-8. Ambient motion, shadow polish (low priority).
+1. PR 4 — Phase 4 player ground-snap via `surfaceYAt`.
+2. PR 5 — Phase 5 walkability rules (`canMoveTo`).
+3. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
+4. PR 7 — Coastline polish (tetrapod, utility pole, signs, pine; fix "objects below tiles" bug).
+5. PR 8 — Konbini landmark.
+6. PR 9 — Stair GLB swap (Kenney wedge).
+7. PR 10 — Tile dressing overlays (lane stripes, brick joints).
+8. Surface footsteps; station SFX; social UI; character + emotes; remote extrapolation; shadow polish.
 
 
 ---
@@ -472,6 +503,15 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-05-27 — Elevation, stairs, cliff plug, coastline strip:**
+  - `component/TileMap.js`: per-cell Y offset from `cell.level * TILE_LEVEL_HEIGHT` (Phase 2). New inline `TileBank` flat-sided box rendered under every tile to plug rounded-pedestal seams at level transitions; raised tiles use one tall bank instead of stacked pedestals.
+  - `component/StairTile.js` (new): procedural 4-step block, rotation-able, 2.082 × 2.082 m footprint matching pedestal. Bridges one level up. Skirt removed (centralized in `TileBank`).
+  - `lib/world.js`: `normalizeCell` now returns `{ type, level, rotation }` for both string and object forms; `surfaceYAt` returns upper landing on stair cells (`(level + 2) × H`).
+  - `lib/tileModels.js`: `STAIR_TILE_URL` constant (procedural for now, GLB swap later). New `stair` palette (warm tan/clay), `brick` palette tuned for anime-pedestrian beige (`top: "#d9a98a"`, `side: "#b07a5a"`).
+  - `lib/testTileMap.js`: extended layout to coastline (gz 12–26): brick north/south sidewalks, 3-row asphalt road, 6-wide raised brick lookout (gx 7–12, gz 19–21), 2-step descent (`stairUpE/W`) into sand `level: -1` then `level: -2`. `S2 = { type: sand, level: -2 }` helper.
+  - `lib/environmentModels.js` + `component/Decoration.js`: `vendingMachine`, `railing` GLB kinds; new `FlatStripProp` helper backs inline `tactilePaving` (yellow Japan curb strip) and `crosswalkStripe` (white).
+  - `lib/testWorld.js`: `lookoutDecorations` (railings along south sea edge, two centered benches, vending machine east end, trash + lanterns); `roadDressingDecorations` (tactile paving along both sidewalk/road edges; 5 crosswalk stripes at gx 9–10 / gz 15).
+  - **One train confirmed sufficient** — coastline rails are static scenery, no second train.
 - **2026-05-25 — Tile palettes + Kenney decorations:**
   - `lib/testTileMap.js`: 24×28 map; asphalt center column; path/dirt layout retuned.
   - `lib/environmentModels.js` + `component/Decoration.js`: bush, cobble, flower, grass clump, hedge kinds; preloads.

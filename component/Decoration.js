@@ -87,6 +87,36 @@ function HedgeCornerProp() {
   return <EnvironmentModel url={ENV_MODELS.hedgeCorner} />;
 }
 
+function VendingMachineProp() {
+  return <EnvironmentModel url={ENV_MODELS.vendingMachine} />;
+}
+
+function RailingProp() {
+  return <EnvironmentModel url={ENV_MODELS.railing} />;
+}
+
+/**
+ * Flat painted overlay sitting just above the tile surface.
+ * Used for crosswalk stripes, tactile paving, lane markings — anything that's
+ * "drawn on" the ground without needing a GLB.
+ */
+function FlatStripProp({ width, depth, color, height = 0.02 }) {
+  return (
+    <mesh position={[0, height / 2 + 0.01, 0]} receiveShadow>
+      <boxGeometry args={[width, height, depth]} />
+      <meshToonMaterial color={color} />
+    </mesh>
+  );
+}
+
+function TactilePavingProp() {
+  return <FlatStripProp width={2.0} depth={0.35} color="#e8c44a" />;
+}
+
+function CrosswalkStripeProp() {
+  return <FlatStripProp width={2.0} depth={0.4} color="#f0ece4" />;
+}
+
 /**
  * Add new decoration kinds here:
  *   tree: TreeProp,
@@ -112,6 +142,10 @@ const PROP_COMPONENTS = {
   hedgeStraight: HedgeStraightProp,
   hedgeStraightLong: HedgeStraightLongProp,
   hedgeCorner: HedgeCornerProp,
+  vendingMachine: VendingMachineProp,
+  railing: RailingProp,
+  tactilePaving: TactilePavingProp,
+  crosswalkStripe: CrosswalkStripeProp,
 };
 
 useGLTF.preload(ENV_MODELS.bench);
@@ -132,6 +166,8 @@ useGLTF.preload(ENV_MODELS.grassB);
 useGLTF.preload(ENV_MODELS.hedgeStraight);
 useGLTF.preload(ENV_MODELS.hedgeCorner);
 useGLTF.preload(ENV_MODELS.hedgeStraightLong);
+useGLTF.preload(ENV_MODELS.vendingMachine);
+useGLTF.preload(ENV_MODELS.railing);
 
 /**
  * Render one decoration at a grid cell, lifted to the cell's surface Y.
