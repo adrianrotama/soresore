@@ -433,13 +433,13 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 - Inline overlay decorations (`tactilePaving`, `crosswalkStripe`) via reusable `FlatStripProp`.
 
 **Open bugs (carry over):**
-- **"World objects rendered below tiles" bug** — at least one decoration occasionally renders below grade. Likely causes: (a) fractional `gx`/`gz` falling into adjacent lower-level cell via `Math.floor` in `getCell`, (b) decoration sitting in a tile's bank column rather than on the higher neighbor's surface. Reproduce + identify the prop before fixing.
+- **"World objects rendered below tiles" bug** — significantly reduced after introducing explicit world↔grid helpers (`worldToGrid` / `gridToCellIndex` in `lib/world.js`) and using them for player snap. Remaining cases likely still come from mixed conventions (cell-center `gx/gz` vs edge-aligned grid coords). If it resurfaces, reproduce + identify the prop and convert the callsite to use `worldToGrid` (or add a dedicated helper for decoration placement).
 - **Render cost doubled per cell** (pedestal + bank). Fine at 24×28 but won't scale to larger maps. Migrate to `InstancedMesh` in Phase 6.
 - **`StairTile` is procedural.** Functional but uses 4 separate boxes per stair. Swap to a Kenney wedge GLB at `STAIR_TILE_URL` (`/images/tiles/stair.glb`) when sourced.
 
 **Recommended order (priority — one PR each):**
 
-1. **PR 4 — Phase 4: player ground-snap.** `LocalPlayer` reads `surfaceYAt(world, gx, gz)` per frame, lerps Y. Stair cell's `surfaceYAt` returns the upper landing — fine as a first pass; gradient interpolation comes later. Lets the player actually climb the coastline stairs.
+1. ~~**PR 4 — Phase 4: player ground-snap.**~~ ✅ done 2026-05-28. `LocalPlayer` now receives `world` and smooth-snaps `pos.y` toward the surface each frame. Stairs use per-position interpolation and the avatar leans forward/back based on whether it faces uphill/downhill (local pitch via Euler `YXZ`). `worldToGrid(world, wx, wz)` prevents off-by-half-cell sampling bugs.
 2. **PR 5 — Phase 5: walkability rules.** `canMoveTo(world, from, to)` in `lib/world.js`. Block cliff jumps (`level diff > 0` between non-stair neighbors). Permit movement through stair tiles in the climb direction only.
 3. **PR 6 — Tile rendering optimization.** Migrate `TileBank` and pedestal to `InstancedMesh` grouped by palette + height. Optional: cliff-shape GLB at heights `2H` / `3H` to avoid tall bank boxes. Goal: <50 draw calls for a 40×40 map.
 4. **PR 7 — Coastline polish.** Tetrapod GLB, concrete utility pole + drooping wire, pine tree variant, Japanese road signs. Trim tactile paving to skip lookout cutout. Crosswalk visual tuning. Investigate "objects below tiles" bug here once we have a reliable repro.
@@ -480,7 +480,7 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Still open (prioritized — see Handoff for full order):**
 
-1. PR 4 — Phase 4 player ground-snap via `surfaceYAt`.
+1. ✅ PR 4 — Phase 4 player ground-snap (2026-05-28).
 2. PR 5 — Phase 5 walkability rules (`canMoveTo`).
 3. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
 4. PR 7 — Coastline polish (tetrapod, utility pole, signs, pine; fix "objects below tiles" bug).
@@ -502,6 +502,11 @@ npm run build
 ---
 
 ## Changelog (doc)
+
+- **2026-05-28 — Player ground-snap + grid helper:**
+  - `component/Game.js`: `LocalPlayer` now receives `world={TEST_WORLD}`.
+  - `component/LocalPlayer.js`: Phase 4 ground-snap (smooth Y toward tile surface each frame). Stair cells use per-position interpolation (`stairProgress01`) so the avatar doesn't float; stair lean uses local pitch (Euler order `YXZ`) to avoid world-axis tumble.
+  - `lib/world.js`: added `worldToGrid(world, wx, wz)` + `gridToCellIndex(gx, gz)`; `getCell` uses `gridToCellIndex`. This reduced the intermittent \"objects below tiles\" bug (mixed coordinate conventions / off-by-half-cell sampling).
 
 - **2026-05-27 — Elevation, stairs, cliff plug, coastline strip:**
   - `component/TileMap.js`: per-cell Y offset from `cell.level * TILE_LEVEL_HEIGHT` (Phase 2). New inline `TileBank` flat-sided box rendered under every tile to plug rounded-pedestal seams at level transitions; raised tiles use one tall bank instead of stacked pedestals.

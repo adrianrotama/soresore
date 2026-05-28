@@ -3,7 +3,7 @@
 import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { consumeStepTicks } from "@/lib/gameAudio";
-import { getCell, surfaceYAt, TILE_LEVEL_HEIGHT } from "@/lib/world";
+import { getCell, surfaceYAt, TILE_LEVEL_HEIGHT, worldToGrid } from "@/lib/world";
 import { TILE_SIZE } from "@/lib/tileGrid";
 
 const MAX_SPEED = 10;
@@ -235,12 +235,7 @@ export default function LocalPlayer({ positionRef, world }) {
     // lerps Y toward surfaceYAt + foot offset. For stairs, surfaceYAt returns
     // the upper landing (good enough for now; slope interpolation is later).
     if (world?.map && world?.origin) {
-      // gx = (world_x - origin) / TILE_SIZE so Math.floor(gx) is the cell INDEX
-      // (cell N spans world_x ∈ [origin + N*TILE_SIZE, origin + (N+1)*TILE_SIZE)).
-      // Do NOT subtract `half`: that yields gx=N at cell N's CENTER, which makes
-      // Math.floor() map the west half of every cell to the previous cell.
-      const gx = (pos.x - world.origin[0]) / TILE_SIZE;
-      const gz = (pos.z - world.origin[2]) / TILE_SIZE;
+      const { gx, gz } = worldToGrid(world, pos.x, pos.z);
       const cell = getCell(world, gx, gz);
       stairCell = cell?.type === "stair" ? cell : null;
       stairRot = stairCell?.rotation ?? 0;
