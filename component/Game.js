@@ -187,7 +187,7 @@ export default function Game() {
         ) : (
           <PlayerOrbitCamera positionRef={myPositionRef} />
         )}
-        <LocalPlayer positionRef={myPositionRef} />
+        <LocalPlayer positionRef={myPositionRef} world={TEST_WORLD} />
 
         {remotePlayers.map(([id, networkPosition]) => (
           <RemotePlayer

@@ -3,6 +3,8 @@
 import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { consumeStepTicks } from "@/lib/gameAudio";
+import { getCell, surfaceYAt, TILE_LEVEL_HEIGHT } from "@/lib/world";
+import { TILE_SIZE } from "@/lib/tileGrid";
 
 const MAX_SPEED = 10;
 // How fast velocity catches the input direction (lower = softer start).
@@ -17,6 +19,31 @@ const MAX_TURN_SPEED = 4;
 const ROTATION_MIN_SPEED = 0.12;
 // Below this dot(velocity, input), treat as a reversal — face intent, not momentum.
 const REVERSE_FACING_DOT = 0.25;
+
+const PLAYER_FOOT_OFFSET = 0.5;
+const GROUND_SNAP_RATE = 18;
+const STAIR_TILT_RATE = 14;
+const STAIR_TILT_ANGLE = Math.atan2(TILE_LEVEL_HEIGHT, TILE_SIZE);
+
+function clamp01(t) {
+  return Math.max(0, Math.min(1, t));
+}
+
+function stairProgress01(cell, gx, gz) {
+  const fx = gx - Math.floor(gx);
+  const fz = gz - Math.floor(gz);
+  const rot = cell.rotation ?? 0;
+
+  // Match `StairTile` comment: rotation 0 climbs toward +Z.
+  // Rotate 90°: climb toward +X. Rotate -90°: climb toward -X. Rotate π: climb toward -Z.
+  if (Math.abs(rot) < 0.001) return clamp01(fz);
+  if (Math.abs(rot - Math.PI / 2) < 0.001) return clamp01(fx);
+  if (Math.abs(rot + Math.PI / 2) < 0.001) return clamp01(1 - fx);
+  if (Math.abs(Math.abs(rot) - Math.PI) < 0.001) return clamp01(1 - fz);
+
+  // Fallback for arbitrary rotations: treat as +Z climb.
+  return clamp01(fz);
+}
 
 function isMovingKey(key) {
   return (
@@ -114,7 +141,7 @@ function getFacingDirection(vel, speed, worldInput) {
   return null;
 }
 
-export default function LocalPlayer({ positionRef }) {
+export default function LocalPlayer({ positionRef, world }) {
   const { camera } = useThree();
   const meshRef = useRef();
   const keys = useRef({});
@@ -165,6 +192,9 @@ export default function LocalPlayer({ positionRef }) {
 
     const pos = positionRef.current;
     const vel = velocityRef.current;
+    let stairCell = null;
+    let stairRot = 0;
+    let stairProgress = 0;
 
     const cameraInput = getCameraSpaceInput(keys.current);
     const { forward, right } = getCameraBasis(
@@ -201,8 +231,57 @@ export default function LocalPlayer({ positionRef }) {
     pos.x += vel.x * delta;
     pos.z += vel.z * delta;
 
+    // Phase 4: Ground-snap (smoothed). Converts world XZ -> grid coords and
+    // lerps Y toward surfaceYAt + foot offset. For stairs, surfaceYAt returns
+    // the upper landing (good enough for now; slope interpolation is later).
+    if (world?.map && world?.origin) {
+      // gx = (world_x - origin) / TILE_SIZE so Math.floor(gx) is the cell INDEX
+      // (cell N spans world_x ∈ [origin + N*TILE_SIZE, origin + (N+1)*TILE_SIZE)).
+      // Do NOT subtract `half`: that yields gx=N at cell N's CENTER, which makes
+      // Math.floor() map the west half of every cell to the previous cell.
+      const gx = (pos.x - world.origin[0]) / TILE_SIZE;
+      const gz = (pos.z - world.origin[2]) / TILE_SIZE;
+      const cell = getCell(world, gx, gz);
+      stairCell = cell?.type === "stair" ? cell : null;
+      stairRot = stairCell?.rotation ?? 0;
+      stairProgress = stairCell ? stairProgress01(stairCell, gx, gz) : 0;
+      const surfaceY =
+        cell?.type === "stair"
+          ? // Stair `level` is the BASE; tile rises from level*H (low end)
+            // up to (level+1)*H (high end). E.g. STAIR_L1 (level 0) → 0..1 m.
+            (cell.level + stairProgress) * TILE_LEVEL_HEIGHT
+          : surfaceYAt(world, gx, gz);
+      const targetY = surfaceY + PLAYER_FOOT_OFFSET;
+      pos.y += (targetY - pos.y) * smoothRate(GROUND_SNAP_RATE, delta);
+    }
+
     const mesh = meshRef.current;
     if (!mesh) return;
+
+    // Lean along the player's LOCAL forward axis (pitch), not world axes —
+    // so it always reads as "forward/back lean" no matter where they face.
+    // Euler order YXZ means rotation.x is applied AFTER yaw → local pitch.
+    if (mesh.rotation.order !== "YXZ") mesh.rotation.order = "YXZ";
+
+    let targetPitch = 0;
+    if (stairCell) {
+      // Slope-up direction in world XZ (stair at rot=0 climbs toward +Z).
+      const upX = Math.sin(stairRot);
+      const upZ = Math.cos(stairRot);
+      // Player facing from current yaw (mesh default forward = -Z).
+      const yaw = mesh.rotation.y;
+      const fwdX = -Math.sin(yaw);
+      const fwdZ = -Math.cos(yaw);
+      // dot > 0 → facing uphill (lean forward); dot < 0 → downhill (lean back).
+      const dot = fwdX * upX + fwdZ * upZ;
+      targetPitch = STAIR_TILT_ANGLE * dot;
+    }
+    mesh.rotation.x +=
+      (targetPitch - mesh.rotation.x) * smoothRate(STAIR_TILT_RATE, delta);
+    if (mesh.rotation.z !== 0) {
+      mesh.rotation.z +=
+        (0 - mesh.rotation.z) * smoothRate(STAIR_TILT_RATE, delta);
+    }
 
     const speed = Math.hypot(vel.x, vel.z);
 
