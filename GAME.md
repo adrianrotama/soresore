@@ -41,7 +41,7 @@ Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 ```
 app/page.js                 → full-viewport <Game />
 component/Game.js           → Canvas, Supabase sync, spawn, mounts <World> + <GameAudio />
-component/World.js          → mounts <TileMap> + <Decoration>s + <Landmark>s (single world root)
+component/World.js          → mounts <TileMap> + <Decoration>s + <Landmark>s; dev <CollisionDebug>
 component/TileMap.js        → renders 2D map array via <TileModel> per cell; adds cliff-face `TileBank`
 component/TileModel.js      → load pedestal GLB, repaint vertex colors per palette, toon material
 component/StairTile.js      → procedural 4-step stair block (one level rise), rotation-able
@@ -57,13 +57,15 @@ component/Environment.js    → ground, fog, lights, shadows
 component/EnvironmentModel.js → load one GLB/GLTF (useGLTF, shadows, ground snap)
 component/GameAudio.js      → unlock Web Audio on first key/pointer; tab mute
 lib/supabase.js             → Supabase client
-lib/world.js                → surfaceYAt, cellSurfaceWorld, TILE_LEVEL_HEIGHT, normalizeCell
+lib/world.js                → surfaceYAt, canMoveTo / canMoveStep (terrain + decorations), cellSurfaceWorld
+lib/decorationCollision.js  → grid footprints, buildDecorationBlockedSet, dev debug helpers
 lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld helper
 lib/tileModels.js           → TILE_PALETTES per tile type; single pedestal GLB URL
 lib/testTileMap.js          → station + coastline layout (grass/path/asphalt/brick/sand, stairs, multi-level)
 lib/testWorld.js            → bundles { map, origin, decorations, landmarks }
 lib/trainRoute.js           → DEFAULT_TRAIN_ROUTE, path sampling, fade/exit helpers
-lib/environmentModels.js    → GLB/GLTF URL constants + preload list
+lib/environmentModels.js    → ENV_REGISTRY (url + per-kind grid collision), ENV_MODELS URLs
+component/CollisionDebug.js → dev-only red/white collision wireframes (NODE_ENV development)
 lib/interpolation.js        → smoothRate, lerpPosition (remotes; reusable)
 lib/gameAudio.js            → ambience loop, one-shot footsteps, step phase ticks
 public/audio/               → see Audio section
@@ -127,7 +129,7 @@ Prune only clears React state, not DB rows.
 
 **State:** `positionRef` in `Game.js` (mutable, no per-frame React updates). Mesh via `meshRef` in `useFrame`.
 
-**Movement:** camera-relative WASD → world direction → velocity steers toward target with separate **accel** / **decel** (`1 - Math.exp(-rate * delta)`). Position: `pos += vel * delta`.
+**Movement:** camera-relative WASD → world direction → velocity steers toward target with separate **accel** / **decel** (`1 - Math.exp(-rate * delta)`). Position: `pos += vel * delta`. When `world` is set, each frame tests `canMoveTo(world, fromGx, fromGz, toGx, toGz)` with axis slide (try full move, then X-only, then Z-only) before applying XZ.
 
 **Camera basis:** `forward` = horizontal camera→player; `right` = `forward × up` → `{ x: -forward.z, z: forward.x }` (wrong cross order reverses strafe).
 
@@ -328,9 +330,35 @@ Grid props via `{ kind, gx, gz, rotation?, scale?, offset? }` in `testWorld.js`.
 | `tactilePaving` | Inline yellow strip (`#e8c44a`) — Japan-style curb edge. Reusable `FlatStripProp` helper |
 | `crosswalkStripe` | Inline white strip (`#f0ece4`); place several at the player's natural crossing |
 
-Per-entry `rotation`, `scale`, and `offset` on the decoration object (see `DecorationInner`). Add a kind: register in `PROP_COMPONENTS`, add URL to `ENV_MODELS`, preload with `useGLTF.preload`, declare in `testWorld.js`.
+Per-entry `rotation`, `scale`, and `offset` on the decoration object (see `DecorationInner`). Add a kind: register in `PROP_COMPONENTS`, add URL to `ENV_REGISTRY` / `ENV_MODELS`, preload with `useGLTF.preload`, declare in `testWorld.js`.
 
-**Not done:** animated crossing gates; surface footstep zones; konbini landmark; station hut landmark (GLB on disk, not wired).
+### Decoration grid collision (PR 5b — partial, 2026-05-29)
+
+Static props can block movement via **`ENV_REGISTRY[kind].collision`** in `lib/environmentModels.js` (merged with optional per-placement `deco.collisionOverride`).
+
+| Field | Role |
+|-------|------|
+| `blocks: true` | Participates in collision |
+| `cells` or `cellsX` / `cellsZ` | Footprint size in **tile units** (1 = one 2 m cell) |
+| `anchor` | `"center"` (default, matches mesh at `gx/gz`) or `"corner"` |
+| `offset` | `[x, y, z]` meters in **local** space before `deco.rotation`; shift without resizing |
+
+**Pipeline:**
+
+1. `lib/decorationCollision.js` — `buildDecorationBlockedSet(world)` rotates each footprint, takes an axis-aligned bounding box, **snaps to whole grid cells** (`ix, iz`), stores keys in a `Set`.
+2. `lib/testWorld.js` — `TEST_WORLD.decorationBlocked = buildDecorationBlockedSet(TEST_WORLD)` at module load (restart dev after registry edits).
+3. `lib/world.js` — `canMoveStep` calls `isDecorationBlocked(world, toGx, toGz)` when entering a new cell.
+4. `component/CollisionDebug.js` (dev only) — **red** = logical rotated box (`cellsX` × `cellsZ`); **white** = 2 m tiles that **this** decoration adds to the blocked set.
+
+**Kinds with collision today:** `bench`, `trashcan`, `tree`, `treeLarge`, `streetLantern`, `bush`, `bushLarge`, `hedgeStraight`, `hedgeStraightLong`, `hedgeCorner`, `vendingMachine`, `railing` (see registry for tuned numbers).
+
+**Design choice:** Runtime blocking is **grid tiles**, not the red wireframe. Thin `cellsZ` (e.g. `0.15` on railings) only shapes the debug box; walk block still occupies **~one full tile** in Z unless `cellsZ ≥ 1`. Use `cellsX` for length along the rail, `offset` to slide the footprint.
+
+**Train:** Dynamic train collision was tried and **removed** (perf); player can walk through the consist for now.
+
+**Not done (collision — see Handoff):** sub-tile / red-box blocking; railing accuracy; white-tile pass-through bug; hot-reload of `decorationBlocked` without restart.
+
+**Not done (decorations):** animated crossing gates; surface footstep zones; konbini landmark; station hut landmark (GLB on disk, not wired).
 
 ---
 
@@ -413,44 +441,55 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 - ~~**Phase 2 — Elevation rendering**~~ ✅ done 2026-05-27.
 - ~~**Phase 3 — Slopes/stairs**~~ ✅ done 2026-05-27 (procedural; GLB swap pending).
-- **Phase 4 — Player ground-snap:** `LocalPlayer` reads `surfaceYAt` for its cell.
-- **Phase 5 — Walkability rules:** `canMoveTo(world, from, to)` blocks cliff jumps; allows stair-adjacent.
+- ~~**Phase 4 — Player ground-snap**~~ ✅ done 2026-05-28 (`LocalPlayer` + `worldToGrid`).
+- ~~**Phase 5 — Walkability rules**~~ ✅ done 2026-05-29 (`canMoveTo` / `canMoveStep`: cliffs, ≤1-level drops, stair axis).
+- **Phase 5b — Decoration collision** — partial 2026-05-29 (grid footprints + dev overlay; needs accuracy pass).
 - **Phase 6 — Tile rendering optimization** (new): InstancedMesh for pedestal + bank, merged geometry for plateau interiors, taller-cliff GLB shapes.
 
 ---
 
 ## Handoff — continue here (next session)
 
-**State (2026-05-27, coastline strip):** Map now layered north→south as **station → mini-park → train → road → coastline lookout → beach**. Multi-level terrain works (sand at `level: -1` / `-2`, brick lookout at `level: 0` flanked by stairs descending into sand). Brick tile palette + `TileBank` cliff plug + procedural `StairTile` are all live. Coastline lookout has railing + benches + vending machine + lanterns + trash. Sidewalk/road boundary has tactile-paving strip; crosswalk stripes at the player crossing.
+**State (2026-05-29):** Coastline strip unchanged from 2026-05-27. **Phase 4** ground-snap and **Phase 5** tile walkability (`canMoveTo` / `canMoveStep`) are in. **Phase 5b** adds **decoration grid collision** (`lib/decorationCollision.js`, `ENV_REGISTRY.collision`, precomputed `TEST_WORLD.decorationBlocked`) and dev **`CollisionDebug`** overlay (red = logical box, white = blocked tiles per decoration).
 
 **Architecture lock-in:** unchanged. `<World data={TEST_WORLD} />` is the single world root; cells are `string` or `{ type, level?, rotation? }`. `normalizeCell` returns `{ type, level, rotation }` always.
 
-**Verified working (2026-05-27):**
-- Phase 2 elevation: any integer `level` (positive, zero, negative) renders correctly.
-- Phase 3 stairs: `stairUpW(level)` / `stairUpE(level)` helpers in `testTileMap.js`; two-stair stack bridges `level 0 → -1 → -2`.
-- Cliff face: `TileBank` box eliminates rounded-pedestal gaps at every level transition; raised tiles get one tall bank instead of stacked pedestals.
-- Coastline GLBs (`vending_machine.glb`, `railing.glb`) wired via `Decoration.js`; preloaded.
-- Inline overlay decorations (`tactilePaving`, `crosswalkStripe`) via reusable `FlatStripProp`.
+**Verified working (2026-05-29):**
+- Terrain walkability: flat cliff block (`toLevel > fromLevel`), max one-level descent, stair climb axis alignment, diagonal corner checks.
+- `LocalPlayer` axis-slide against `canMoveTo` before applying XZ.
+- Decoration blocking for trees, benches, hedges, vending machine, railing (grid-snapped); registry tuning via `cellsX` / `cellsZ` / `offset` / `anchor`.
+- Dev overlay: `CollisionDebug` mounted when `NODE_ENV === "development"`.
 
-**Open bugs (carry over):**
-- **"World objects rendered below tiles" bug** — significantly reduced after introducing explicit world↔grid helpers (`worldToGrid` / `gridToCellIndex` in `lib/world.js`) and using them for player snap. Remaining cases likely still come from mixed conventions (cell-center `gx/gz` vs edge-aligned grid coords). If it resurfaces, reproduce + identify the prop and convert the callsite to use `worldToGrid` (or add a dedicated helper for decoration placement).
-- **Render cost doubled per cell** (pedestal + bank). Fine at 24×28 but won't scale to larger maps. Migrate to `InstancedMesh` in Phase 6.
-- **`StairTile` is procedural.** Functional but uses 4 separate boxes per stair. Swap to a Kenney wedge GLB at `STAIR_TILE_URL` (`/images/tiles/stair.glb`) when sourced.
+**Collision system — needs improvement (carry over):**
+
+1. **Railings block whole tiles in Z** — By design today, footprints snap to **2 m grid cells**. A thin mesh (`cellsZ: 0.15–0.35`) still blocks **~one full tile** north–south; red wireframe looks thin but white slab is wide. **Not fixed.** Options for a future PR: optional continuous OBB check for thin kinds only; narrower logical tiles (bigger map change); or accept grid feel and tune `offset` + placement so the one tile sits on the sea side only.
+2. **White debug tiles sometimes still passable** — Reported in playtests. Likely causes to verify next session:
+   - `canMoveTo` returns `true` for **same `ix, iz`** without calling `canMoveStep` (so micro-movement inside a blocked 2 m cell may still slip through) — see `lib/world.js` ~L186 vs `canMoveStep` ~L131.
+   - Red vs white mismatch (walking in red where no white tile was emitted for thin `cellsZ`).
+   - Overlapping decorations / spawn inside a blocked cell.
+3. **Registry edits require dev restart** — `decorationBlocked` is built once at `testWorld.js` load.
+4. **Train** — no collision; walk through consist.
+
+**Open bugs (carry over from earlier):**
+- **"World objects rendered below tiles"** — was reduced 2026-05-28 via `worldToGrid` / `gridToCellIndex`. **Regressed 2026-05-29** — reported **more often** after today's walkability + decoration collision work (not fully diagnosed). Suspects for next session: player stopped at cell edges by `canMoveTo` / axis-slide while `surfaceYAt` still samples a neighboring cell; fractional `gx/gz` vs `Math.floor` in `getCell` vs decoration placement; props on stairs / multi-level lookout (`level` mismatch). Repro: note `gx/gz`, tile type, and which prop kinds sink; compare `worldToGrid` output to decoration `gx/gz` conventions.
+- **Render cost doubled per cell** (pedestal + bank) — Phase 6.
+- **`StairTile` procedural** — GLB swap pending.
 
 **Recommended order (priority — one PR each):**
 
-1. ~~**PR 4 — Phase 4: player ground-snap.**~~ ✅ done 2026-05-28. `LocalPlayer` now receives `world` and smooth-snaps `pos.y` toward the surface each frame. Stairs use per-position interpolation and the avatar leans forward/back based on whether it faces uphill/downhill (local pitch via Euler `YXZ`). `worldToGrid(world, wx, wz)` prevents off-by-half-cell sampling bugs.
-2. **PR 5 — Phase 5: walkability rules.** `canMoveTo(world, from, to)` in `lib/world.js`. Block cliff jumps (`level diff > 0` between non-stair neighbors). Permit movement through stair tiles in the climb direction only.
-3. **PR 6 — Tile rendering optimization.** Migrate `TileBank` and pedestal to `InstancedMesh` grouped by palette + height. Optional: cliff-shape GLB at heights `2H` / `3H` to avoid tall bank boxes. Goal: <50 draw calls for a 40×40 map.
-4. **PR 7 — Coastline polish.** Tetrapod GLB, concrete utility pole + drooping wire, pine tree variant, Japanese road signs. Trim tactile paving to skip lookout cutout. Crosswalk visual tuning. Investigate "objects below tiles" bug here once we have a reliable repro.
-5. **PR 8 — Konbini landmark.** Beach-side konbini (small convenience store) as a `Landmark` kind. Re-use the dormant `station-hut-2.glb` loader pattern. Proximity door, interior camera preset.
-6. **PR 9 — Stair GLB swap.** Replace procedural `StairTile` with a Kenney Platformer Kit wedge at `/images/tiles/stair.glb`. Use `TileModel` loader for vertex repaint.
-7. **PR 10 — Tile dressing overlays.** Lane stripes (white) and yellow centerline on asphalt; brick joint pattern on sidewalks; subtle drop-shadow planes under props. Builds on `FlatStripProp`.
+1. ~~**PR 4 — Phase 4: player ground-snap.**~~ ✅ 2026-05-28.
+2. ~~**PR 5 — Phase 5: walkability rules.**~~ ✅ 2026-05-29.
+3. **PR 5b (follow-up) — Decoration collision polish.** Fix same-cell pass-through in `canMoveTo`; tune railings (`railing2.glb`, `offset`, `cellsX` along edge); decide if thin props need red-box / sub-tile blocking; optional rebuild `decorationBlocked` on hot reload in dev. **Also:** investigate **objects-below-tiles** regression (may share root cause with grid sampling / movement blocking).
+4. **PR 6 — Tile rendering optimization.** InstancedMesh for pedestal + bank; taller cliff GLB optional.
+5. **PR 7 — Coastline polish.** Tetrapod, utility pole, signs, pine; tactile paving trim; crosswalk tuning.
+6. **PR 8 — Konbini landmark.**
+7. **PR 9 — Stair GLB swap.**
+8. **PR 10 — Tile dressing overlays.**
 
 **Defer (still parked):**
-- Surface-based footsteps (wait for Phase 4).
-- Procedural rail loop / second train on the coastline (one train confirmed sufficient).
-- Station hut re-wire (`station-hut-2.glb`).
+- Surface-based footsteps (zones).
+- Second train / rail loop.
+- Station hut re-wire.
 - Remote extrapolation; chat/diary social UI; character + emotes; station SFX.
 
 **Naming:**
@@ -478,16 +517,19 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-27):** Phase 2 elevation rendering (`TileMap` reads `cell.level`); Phase 3 stair tiles (`StairTile.js` + `stairUpW`/`stairUpE` helpers, multi-level descents); `TileBank` cliff face (square-edge box plug under every tile, fixes rounded-pedestal gaps); brick tile palette tuned for anime-pedestrian look; coastline strip (road dressing — tactile paving + crosswalk stripes, lookout cluster — railing/bench/vending/lanterns/trash); `vending_machine.glb` + `railing.glb` wired; inline `FlatStripProp` helper.
 
+**Done (2026-05-29):** Phase 5 terrain walkability; Phase 5b decoration grid collision (`decorationCollision.js`, `ENV_REGISTRY.collision`, `CollisionDebug`); train collision not shipped.
+
 **Still open (prioritized — see Handoff for full order):**
 
 1. ✅ PR 4 — Phase 4 player ground-snap (2026-05-28).
-2. PR 5 — Phase 5 walkability rules (`canMoveTo`).
-3. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
-4. PR 7 — Coastline polish (tetrapod, utility pole, signs, pine; fix "objects below tiles" bug).
-5. PR 8 — Konbini landmark.
-6. PR 9 — Stair GLB swap (Kenney wedge).
-7. PR 10 — Tile dressing overlays (lane stripes, brick joints).
-8. Surface footsteps; station SFX; social UI; character + emotes; remote extrapolation; shadow polish.
+2. ✅ PR 5 — Phase 5 walkability rules (`canMoveTo`) (2026-05-29).
+3. **PR 5b (partial)** — Decoration grid collision + `CollisionDebug` (2026-05-29); polish open (railings, pass-through).
+4. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
+5. PR 7 — Coastline polish (tetrapod, utility pole, signs, pine; fix "objects below tiles" bug).
+6. PR 8 — Konbini landmark.
+7. PR 9 — Stair GLB swap (Kenney wedge).
+8. PR 10 — Tile dressing overlays (lane stripes, brick joints).
+9. Surface footsteps; station SFX; social UI; character + emotes; remote extrapolation; shadow polish.
 
 
 ---
@@ -503,6 +545,14 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-05-29 — Walkability + decoration grid collision (end of day):**
+  - `lib/world.js`: `canMoveTo` / `canMoveStep` — cliff rise block, ≤1-level drops on flat, stair axis alignment, diagonal corner checks; `isDecorationBlocked` on cell entry.
+  - `lib/decorationCollision.js` (new): rotated rect footprints (`cellsX`/`cellsZ`, `anchor` center default, `offset`), `buildDecorationBlockedSet`, `listDecorationCollisionFootprints` for debug.
+  - `lib/environmentModels.js`: `ENV_REGISTRY` merges url + `collision` per kind; `collisionForKind()`.
+  - `lib/testWorld.js`: `TEST_WORLD.decorationBlocked` precomputed at load.
+  - `component/LocalPlayer.js`: movement gated by `canMoveTo` with axis slide.
+  - `component/CollisionDebug.js` (new): dev red (logical) / white (per-deco blocked tiles); mounted from `World.js` when `NODE_ENV === "development"`.
+  - **Known gaps:** railings still block whole grid tiles in Z; white overlay tiles sometimes passable (investigate `canMoveTo` same-cell early return); train collision removed; **objects-below-tiles bug more frequent** than pre-2026-05-29 (see Handoff).
 - **2026-05-28 — Player ground-snap + grid helper:**
   - `component/Game.js`: `LocalPlayer` now receives `world={TEST_WORLD}`.
   - `component/LocalPlayer.js`: Phase 4 ground-snap (smooth Y toward tile surface each frame). Stair cells use per-position interpolation (`stairProgress01`) so the avatar doesn't float; stair lean uses local pitch (Euler order `YXZ`) to avoid world-axis tumble.

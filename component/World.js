@@ -3,6 +3,9 @@
 import TileMap from "@/component/TileMap";
 import Decoration from "@/component/Decoration";
 import Landmark from "@/component/Landmark";
+import CollisionDebug from "@/component/CollisionDebug";
+
+const IS_DEV = process.env.NODE_ENV === "development";
 
 /**
  * Renders a world: terrain grid + decorations + landmarks. Single mount in scene.
@@ -35,6 +38,8 @@ export default function World({ data, positionRef }) {
           />
         ))}
       </group>
+
+      {IS_DEV ? <CollisionDebug world={data} /> : null}
     </group>
   );
 }

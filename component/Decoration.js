@@ -122,6 +122,9 @@ function CrosswalkStripeProp() {
  *   tree: TreeProp,
  *   sign: SignProp,
  * Each component should render its mesh standing on local y = 0 (origin at feet).
+ *
+ * Walk collision: `lib/environmentModels.js` → `ENV_REGISTRY` (cells / cellsX×cellsZ, rotated).
+ * Dev wireframes: `component/CollisionDebug.js`. Per-instance: `deco.collisionOverride`.
  */
 const PROP_COMPONENTS = {
   bench: BenchProp,
