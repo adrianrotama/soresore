@@ -3,7 +3,14 @@
 import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { consumeStepTicks } from "@/lib/gameAudio";
-import { getCell, surfaceYAt, TILE_LEVEL_HEIGHT, worldToGrid } from "@/lib/world";
+import {
+  canMoveTo,
+  getCell,
+  stairProgress01,
+  surfaceYAt,
+  TILE_LEVEL_HEIGHT,
+  worldToGrid,
+} from "@/lib/world";
 import { TILE_SIZE } from "@/lib/tileGrid";
 
 const MAX_SPEED = 10;
@@ -24,26 +31,6 @@ const PLAYER_FOOT_OFFSET = 0.5;
 const GROUND_SNAP_RATE = 18;
 const STAIR_TILT_RATE = 14;
 const STAIR_TILT_ANGLE = Math.atan2(TILE_LEVEL_HEIGHT, TILE_SIZE);
-
-function clamp01(t) {
-  return Math.max(0, Math.min(1, t));
-}
-
-function stairProgress01(cell, gx, gz) {
-  const fx = gx - Math.floor(gx);
-  const fz = gz - Math.floor(gz);
-  const rot = cell.rotation ?? 0;
-
-  // Match `StairTile` comment: rotation 0 climbs toward +Z.
-  // Rotate 90°: climb toward +X. Rotate -90°: climb toward -X. Rotate π: climb toward -Z.
-  if (Math.abs(rot) < 0.001) return clamp01(fz);
-  if (Math.abs(rot - Math.PI / 2) < 0.001) return clamp01(fx);
-  if (Math.abs(rot + Math.PI / 2) < 0.001) return clamp01(1 - fx);
-  if (Math.abs(Math.abs(rot) - Math.PI) < 0.001) return clamp01(1 - fz);
-
-  // Fallback for arbitrary rotations: treat as +Z climb.
-  return clamp01(fz);
-}
 
 function isMovingKey(key) {
   return (
@@ -228,8 +215,31 @@ export default function LocalPlayer({ positionRef, world }) {
       }
     }
 
-    pos.x += vel.x * delta;
-    pos.z += vel.z * delta;
+    const nextX = pos.x + vel.x * delta;
+    const nextZ = pos.z + vel.z * delta;
+
+    if (world?.map && world?.origin) {
+      const { gx: fromGx, gz: fromGz } = worldToGrid(world, pos.x, pos.z);
+      const full = worldToGrid(world, nextX, nextZ);
+
+      if (canMoveTo(world, fromGx, fromGz, full.gx, full.gz)) {
+        pos.x = nextX;
+        pos.z = nextZ;
+      } else {
+        const xOnly = worldToGrid(world, nextX, pos.z);
+        if (canMoveTo(world, fromGx, fromGz, xOnly.gx, xOnly.gz)) {
+          pos.x = nextX;
+        }
+        const afterX = worldToGrid(world, pos.x, pos.z);
+        const zOnly = worldToGrid(world, pos.x, nextZ);
+        if (canMoveTo(world, afterX.gx, afterX.gz, zOnly.gx, zOnly.gz)) {
+          pos.z = nextZ;
+        }
+      }
+    } else {
+      pos.x = nextX;
+      pos.z = nextZ;
+    }
 
     // Phase 4: Ground-snap (smoothed). Converts world XZ -> grid coords and
     // lerps Y toward surfaceYAt + foot offset. For stairs, surfaceYAt returns
