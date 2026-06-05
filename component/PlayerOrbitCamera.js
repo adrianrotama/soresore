@@ -6,8 +6,8 @@ import { OrbitControls } from "@react-three/drei";
 
 const TARGET_Y_OFFSET = 1;
 /** Starting offset on first frame (similar to former FollowCamera). */
-const INIT_HEIGHT = 4;
-const INIT_DISTANCE_BEHIND = 8;
+const INIT_HEIGHT = 6;
+const INIT_DISTANCE_BEHIND = 10;
 
 /**
  * Default camera — orbit pivot follows the player; drag to adjust view, scroll to zoom.
