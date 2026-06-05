@@ -27,7 +27,7 @@ function WireBox({ position, size, rotationY, color }) {
  * Dev-only collision overlay (npm run dev).
  *
  * - Red: logical box (`cellsX` × `cellsZ`, `anchor`, `offset`). Tune size/shift.
- * - White: 2 m tiles this decoration adds to the blocked set (per object).
+ * - White: 2 m tiles each decoration / landmark adds to the blocked set.
  *
  * Red can extend past white when a dimension is &lt; 1 cell — only white tiles
  * block movement. Thin rails: widen with `cellsZ` or shift with `offset`, not

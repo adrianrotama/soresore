@@ -1,6 +1,7 @@
 "use client";
 
 import TrainLandmark from "@/component/StationRailProps";
+import KonbiniLandmark from "@/component/KonbiniLandmark";
 import { DEFAULT_TRAIN_ROUTE } from "@/lib/trainRoute";
 
 /**
@@ -13,6 +14,16 @@ import { DEFAULT_TRAIN_ROUTE } from "@/lib/trainRoute";
  *     end: [x, y, z],
  *     speed: 8,
  *     respawnMs: 3000,
+ *   }
+ *
+ * Konbini example:
+ *   {
+ *     kind: "konbini",
+ *     position: [x, y, z],
+ *     rotation?: radians,
+ *     scale?: number,
+ *     sign?: { text, position, fontSize, color, tilt?, yaw?, roll?, depth?, bevelEnabled? },
+ *     collision?: { blocks: true, cellsX?, cellsZ?, offset?, anchor? },
  *   }
  */
 
@@ -27,8 +38,13 @@ function TrainLandmarkEntry({ landmark }) {
   return <TrainLandmark route={route} />;
 }
 
+function KonbiniLandmarkEntry({ landmark }) {
+  return <KonbiniLandmark landmark={landmark} />;
+}
+
 const LANDMARK_COMPONENTS = {
   train: TrainLandmarkEntry,
+  konbini: KonbiniLandmarkEntry,
 };
 
 export default function Landmark({ landmark, positionRef }) {
