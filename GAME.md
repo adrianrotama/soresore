@@ -19,7 +19,7 @@
 - **Blender conventions** for new tile/decoration GLBs: 2.082 × 2.082 × 1.0 m for pedestals; bottom-center origin; vertex colors (top vs side) — `TileModel` Y-threshold classifier will detect. Export to `public/images/tiles/`. Props at feet-origin so `cellSurfaceWorld` drops them on tiles. Prefer **`.glb`** (single file) over `.gltf` + `.bin` for runtime props.
 - **Train route Y** uses `TILE_LEVEL_HEIGHT` in `start[1]` / `end[1]` (`lib/trainRoute.js` `DEFAULT_TRAIN_ROUTE`). Don't hardcode `y = 0` for tile-surface content.
 
-Browser multiplayer 3D prototype. One tab = one player. Positions sync via **Supabase**; remotes render as cubes. Target: cozy low-poly world (`AGENTS.md`), not a debug scene.
+Browser multiplayer 3D prototype. One tab = one player. Positions sync via **Supabase**; local + remote avatars render as **guest cats** (Quaternius GLB by default). Target: cozy low-poly world (`AGENTS.md`), not a debug scene.
 “Tiny cozy world”. Phase 1 Features: movement, chat, diary, friend.
 
 ---
@@ -49,8 +49,12 @@ component/Decoration.js     → grid-anchored prop registry ({ kind, gx, gz, rot
 component/Landmark.js       → world-anchored structure registry ({ kind, … })
 component/TrainConsist.js   → 3-car train: straight route, snake enter/exit, opacity fade
 component/StationRailProps.js → train landmark wrapper (Suspense + TrainConsist)
-component/LocalPlayer.js    → local input, movement, bob/squash, footstep ticks
-component/RemotePlayer.js   → remote mesh; network vs visual position
+component/LocalPlayer.js    → local input, movement, bob/squash, footstep ticks; mounts <PlayerAvatar>
+component/RemotePlayer.js   → remote avatar; network vs visual position
+component/PlayerAvatar.js   → guest cat GLB (Quaternius / Tubbs), toon materials, Idle/Walk blend
+lib/playerModels.js         → per-model url, scale, rotation, foot offset, toon flags
+lib/guestCatPalette.js      → GUEST_CAT_PRESETS, paletteFromSeed, UV zone helpers
+lib/quaterniusRecolor.js    → paint Quaternius mesh vertex colors by UV zone (body / accent / eye / nose)
 component/PlayerOrbitCamera.js → default orbit camera (follows player; drag to adjust)
 component/FollowCamera.js   → legacy fixed follow (dev toggle only)
 component/Environment.js    → ground, fog, lights, shadows
@@ -69,6 +73,7 @@ component/CollisionDebug.js → dev-only red/white collision wireframes (NODE_EN
 lib/interpolation.js        → smoothRate, lerpPosition (remotes; reusable)
 lib/gameAudio.js            → ambience loop, one-shot footsteps, step phase ticks
 public/audio/               → see Audio section
+public/images/characters/   → guest cat GLBs (`Cat-Quarternius.glb`, `Tubbs-the-cat.glb`)
 public/images/environments/ → Kenney train/rail + Tiny Treats props (see Environment props)
 public/images/tiles/        → tile pedestal GLB + Kenney source packs (see Tile system)
 ```
@@ -164,7 +169,72 @@ Prune only clears React state, not DB rows.
 
 **Tuning:** `REMOTE_POSITION_SMOOTH` in `lib/interpolation.js` (default `8`).
 
-**Not done:** extrapolation between 5s syncs; faster local upsert rate.
+**Not done:** extrapolation between 5s syncs; faster local upsert rate; **walk animation on remotes** (locals blend Idle/Walk from `moving01Ref`; remotes idle-only until velocity is networked or derived from position delta).
+
+---
+
+## Guest cat avatars (Phase A — 2026-06-05)
+
+**Goal:** Guest players = low-poly **animated cat** (Quaternius). Logged-in chibi customization is a later phase (see Character roadmap).
+
+### Models (`lib/playerModels.js`)
+
+| Key | File | Notes |
+|-----|------|--------|
+| `quaternius` | `Cat-Quarternius.glb` | **Default.** Skinned mesh, 8 animation clips. Tuned `scale`, `rotation`, `footYOffset` in registry. |
+| `tubbs` | `Tubbs-the-cat.glb` | Static mesh, no rig. Kept for cute comparison — **dev toggle only** for now. |
+
+### Loading (`component/PlayerAvatar.js`)
+
+- Skinned instances: `SkeletonUtils.clone` (plain `scene.clone` breaks animation binding).
+- Feet snapped via bounding-box `min.y` on a child group (matches `PLAYER_FOOT_OFFSET` in `LocalPlayer`).
+- `MeshToonMaterial` — Quaternius keeps atlas **or** solid zone colors when palette recolor is on (see below).
+- `frustumCulled = false` on skinned meshes (avoids invisible cat when bounds are wrong).
+- Parent `LocalPlayer` group still owns movement yaw, bob, squash; avatar child supplies model offset (`rotation` in `playerModels`).
+
+### Animations (Quaternius GLB)
+
+**In file (8 clips):** `Idle`, `Idle_Eating`, `Walk`, `Run`, `Jump_Start`, `Jump_Loop`, `Headbutt`, `Death` (long `AnimalArmature|…|Name` names in GLB).
+
+**Wired today:** **`Idle`** when still, **`Walk`** when moving (`moving01 > 0.15` from `LocalPlayer`). Cross-fade ~0.15s; `walk.timeScale` scales with speed (0.6–1.4). **Run** is not used — Walk at all speeds (cozy pace).
+
+**Not wired:** Run, jumps, eating, headbutt, death; remote walk blend.
+
+### Guest color presets (`lib/guestCatPalette.js`)
+
+Quaternius is one mesh with **four UV palette columns**. `quaterniusRecolor.js` paints vertex colors per zone:
+
+| UV (rounded) | Zone | Palette field |
+|--------------|------|----------------|
+| `0.41, 0.85` | Main fur | `body` |
+| `0.46, 0.85` | Accent / stripes | `bodyAccent` |
+| `0.53, 0.84` | Nose | `nose` |
+| `0.59, 0.84` | Eyes | `eye` |
+
+**8 presets** in `GUEST_CAT_PRESETS` (Ginger, Snowshoe, Charcoal, …). **`paletteFromSeed(playerId)`** picks one deterministically per tab/session. Remotes use their own `playerId` hash.
+
+With `paletteRecolor: true`, material is `MeshToonMaterial` + `vertexColors` (no atlas multiply) for crisp preset colors.
+
+### Dev toggles (`Game.js`, `NODE_ENV === "development"` only)
+
+| Key | Action |
+|-----|--------|
+| **`2`** | Cycle **local** `GUEST_CAT_PRESETS` (tune colors in `guestCatPalette.js`) |
+| **`3`** | Swap cat model Quaternius ↔ Tubbs |
+| `` ` `` / **F2** | Legacy fixed follow camera vs orbit (unchanged) |
+
+Overlay shows cat label, preset name + index (`Preset: Ginger (1/8 · 2 cycle)`).
+
+### Character roadmap (not started except Phase A)
+
+| Phase | Scope |
+|-------|--------|
+| **A** ✅ | Guest Quaternius cat + bob + Idle/Walk + random palette |
+| **B** | Auth shell — guest = cat, logged-in = placeholder avatar |
+| **C** | Modular chibi avatar (hair / clothes) |
+| **D** | Customization UI + Supabase `appearance` JSON (persist preset or palette id) |
+
+**Defer:** emotes (eating, wave, sit), Run at high speed, Tubbs in production.
 
 ---
 
@@ -358,7 +428,9 @@ Static props can block movement via **`ENV_REGISTRY[kind].collision`** in `lib/e
 
 **Not done (collision — see Handoff):** sub-tile / red-box blocking; railing accuracy; white-tile pass-through bug; hot-reload of `decorationBlocked` without restart.
 
-**Not done (decorations):** animated crossing gates; surface footstep zones; konbini landmark; station hut landmark (GLB on disk, not wired).
+**Not done (decorations):** animated crossing gates; surface footstep zones; station hut landmark (GLB on disk, not wired).
+
+**Konbini landmark (2026-06):** `japaneseStore.glb` via `KonbiniLandmark.js` — grid collision, `Text3D` sign (`Sore-Sore`). See `testWorld.js` konbini entry; not fully re-documented here.
 
 ---
 
@@ -450,7 +522,16 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 ## Handoff — continue here (next session)
 
-**State (2026-05-29):** Coastline strip unchanged from 2026-05-27. **Phase 4** ground-snap and **Phase 5** tile walkability (`canMoveTo` / `canMoveStep`) are in. **Phase 5b** adds **decoration grid collision** (`lib/decorationCollision.js`, `ENV_REGISTRY.collision`, precomputed `TEST_WORLD.decorationBlocked`) and dev **`CollisionDebug`** overlay (red = logical box, white = blocked tiles per decoration).
+**State (2026-06-05):** **Guest cat Phase A** shipped — `PlayerAvatar`, Quaternius Idle/Walk, `GUEST_CAT_PRESETS` + per-id random colors, dev **`2`** (preset cycle) / **`3`** (model swap). Tubbs static compare kept in dev. **Konbini** landmark on test map (prior session). **Phase 4/5** movement + **Phase 5b** decoration collision unchanged from 2026-05-29 (`CollisionDebug` in dev).
+
+**Guest cat — next (small PRs):**
+
+1. **Remote walk animation** — pass speed or `moving01` for remotes (derive from lerped position delta or add to Supabase row later).
+2. **Persist appearance** — when auth lands, store preset name on `players` or profile; guests keep `paletteFromSeed` until then.
+3. **Prod cleanup** — Tubbs dev-only is already gated by model toggle in dev; confirm Quaternius-only default for shipping builds.
+4. **Optional:** Run clip above speed threshold; `Idle_Eating` as sit/konbini emote.
+
+**Carry over (world/collision — still open):**
 
 **Architecture lock-in:** unchanged. `<World data={TEST_WORLD} />` is the single world root; cells are `string` or `{ type, level?, rotation? }`. `normalizeCell` returns `{ type, level, rotation }` always.
 
@@ -481,16 +562,17 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 2. ~~**PR 5 — Phase 5: walkability rules.**~~ ✅ 2026-05-29.
 3. **PR 5b (follow-up) — Decoration collision polish.** Fix same-cell pass-through in `canMoveTo`; tune railings (`railing2.glb`, `offset`, `cellsX` along edge); decide if thin props need red-box / sub-tile blocking; optional rebuild `decorationBlocked` on hot reload in dev. **Also:** investigate **objects-below-tiles** regression (may share root cause with grid sampling / movement blocking).
 4. **PR 6 — Tile rendering optimization.** InstancedMesh for pedestal + bank; taller cliff GLB optional.
-5. **PR 7 — Coastline polish.** Tetrapod, utility pole, signs, pine; tactile paving trim; crosswalk tuning.
-6. **PR 8 — Konbini landmark.**
-7. **PR 9 — Stair GLB swap.**
-8. **PR 10 — Tile dressing overlays.**
+5. **PR 7 — Coastline polish.**  utility pole, signs, Add sea tiles; tactile paving trim; crosswalk tuning.
+6. ~~**PR 8 — Konbini landmark.**~~ ✅ ~2026-06 (basic building + sign + collision).
+7. **PR 8b — Guest cat polish** — remote walk, appearance persistence, emotes (see Guest cat section).
+8. **PR 9 — Stair GLB swap.**
+9. **PR 10 — Tile dressing overlays.**
 
 **Defer (still parked):**
 - Surface-based footsteps (zones).
 - Second train / rail loop.
 - Station hut re-wire.
-- Remote extrapolation; chat/diary social UI; character + emotes; station SFX.
+- Remote extrapolation; chat/diary social UI; chibi modular avatar (Phases B–D); station SFX.
 
 **Naming:**
 - Tile-level: `tileGrid.js`, `tileModels.js`, `TileMap`, `TileModel`.
@@ -519,17 +601,20 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-29):** Phase 5 terrain walkability; Phase 5b decoration grid collision (`decorationCollision.js`, `ENV_REGISTRY.collision`, `CollisionDebug`); train collision not shipped.
 
+**Done (2026-06-05):** Guest cat Phase A — `PlayerAvatar.js`, `playerModels.js`, `guestCatPalette.js`, `quaterniusRecolor.js`; Quaternius Idle/Walk; 8 color presets + `paletteFromSeed`; dev `2`/`3` toggles; eye/nose UV zones tuned.
+
 **Still open (prioritized — see Handoff for full order):**
 
 1. ✅ PR 4 — Phase 4 player ground-snap (2026-05-28).
 2. ✅ PR 5 — Phase 5 walkability rules (`canMoveTo`) (2026-05-29).
 3. **PR 5b (partial)** — Decoration grid collision + `CollisionDebug` (2026-05-29); polish open (railings, pass-through).
 4. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
-5. PR 7 — Coastline polish (tetrapod, utility pole, signs, pine; fix "objects below tiles" bug).
-6. PR 8 — Konbini landmark.
-7. PR 9 — Stair GLB swap (Kenney wedge).
-8. PR 10 — Tile dressing overlays (lane stripes, brick joints).
-9. Surface footsteps; station SFX; social UI; character + emotes; remote extrapolation; shadow polish.
+5. PR 7 — Coastline polish (utility pole, signs, sea tiles; fix "objects below tiles" bug).
+6. ~~PR 8 — Konbini landmark.~~ ✅ ~2026-06.
+7. **PR 8b — Guest cat polish** (remote walk, appearance save, emotes).
+8. PR 9 — Stair GLB swap (Kenney wedge).
+9. PR 10 — Tile dressing overlays (lane stripes, brick joints).
+10. Surface footsteps; station SFX; social UI; chibi avatar Phases B–D; remote extrapolation; shadow polish.
 
 
 ---
@@ -545,6 +630,16 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-06-05 — Guest cat avatars (Phase A, end of day):**
+  - `component/PlayerAvatar.js` (new): `useGLTF` + `SkeletonUtils.clone`, `useAnimations` Idle/Walk, toon materials, foot snap, palette recolor hook.
+  - `lib/playerModels.js` (new): `quaternius` (default) + `tubbs` registry; tuned scale/rotation/footYOffset.
+  - `lib/guestCatPalette.js` (new): 8 `GUEST_CAT_PRESETS`, `paletteFromSeed`, `quaterniusZoneForUV` (nose `0.53`, eyes `0.59`).
+  - `lib/quaterniusRecolor.js` (new): per-vertex zone colors on cloned geometry.
+  - `component/LocalPlayer.js` / `RemotePlayer.js`: cube meshes replaced with `<PlayerAvatar>`; remotes get palette from remote `playerId`.
+  - `component/Game.js`: dev **`2`** cycles local presets, **`3`** swaps models; overlay shows preset name.
+  - Assets: `public/images/characters/Cat-Quarternius.glb`, `Tubbs-the-cat.glb`.
+  - **Known gaps:** remotes idle-only (no walk blend); Run/jump/emote clips unused; Tubbs dev compare only; appearance not in Supabase yet.
+  - **Character roadmap:** Phase A done; B (auth shell) → C (modular chibi) → D (customization UI) documented in Guest cat section.
 - **2026-05-29 — Walkability + decoration grid collision (end of day):**
   - `lib/world.js`: `canMoveTo` / `canMoveStep` — cliff rise block, ≤1-level drops on flat, stair axis alignment, diagonal corner checks; `isDecorationBlocked` on cell entry.
   - `lib/decorationCollision.js` (new): rotated rect footprints (`cellsX`/`cellsZ`, `anchor` center default, `offset`), `buildDecorationBlockedSet`, `listDecorationCollisionFootprints` for debug.
