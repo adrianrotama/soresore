@@ -12,6 +12,16 @@ import World from "@/component/World";
 import GameAudio from "@/component/GameAudio";
 import { TEST_WORLD } from "@/lib/testWorld";
 import { TILE_LEVEL_HEIGHT } from "@/lib/world";
+import {
+  DEFAULT_PLAYER_CAT,
+  PLAYER_CAT_KEYS,
+  PLAYER_CAT_MODELS,
+} from "@/lib/playerModels";
+import {
+  GUEST_CAT_PRESETS,
+  paletteFromSeed,
+  presetIndexFromSeed,
+} from "@/lib/guestCatPalette";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -51,10 +61,20 @@ function pruneStalePlayers(players) {
 
 export default function Game() {
   const playerId = useMemo(() => crypto.randomUUID(), []);
+  const guestPalette = useMemo(() => paletteFromSeed(playerId), [playerId]);
   const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 0 }
   const myPositionRef = useRef(spawn);
   /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);
+  /** Dev only: `3` cycles guest cat prototype (Quaternius ↔ Tubbs). */
+  const [catModel, setCatModel] = useState(DEFAULT_PLAYER_CAT);
+  /** Dev only: `2` cycles GUEST_CAT_PRESETS for local cat color tuning. */
+  const [devPresetIndex, setDevPresetIndex] = useState(() =>
+    presetIndexFromSeed(playerId)
+  );
+  const localGuestPalette = IS_DEV
+    ? GUEST_CAT_PRESETS[devPresetIndex]
+    : guestPalette;
   // Network-authoritative positions from Supabase (not rendered directly).
   const [players, setPlayers] = useState({});
 
@@ -69,6 +89,21 @@ export default function Game() {
       ) {
         return;
       }
+      if (e.key === "2") {
+        setDevPresetIndex(
+          (index) => (index + 1) % GUEST_CAT_PRESETS.length
+        );
+        return;
+      }
+
+      if (e.key === "3") {
+        setCatModel((current) => {
+          const index = PLAYER_CAT_KEYS.indexOf(current);
+          return PLAYER_CAT_KEYS[(index + 1) % PLAYER_CAT_KEYS.length];
+        });
+        return;
+      }
+
       if (e.key !== "`" && e.code !== "Backquote" && e.key !== "F2") return;
 
       setUseLegacyFollow((on) => !on);
@@ -160,7 +195,7 @@ export default function Game() {
   return (
     <>
       <GameAudio />
-      {IS_DEV && useLegacyFollow && (
+      {IS_DEV && (
         <div
           style={{
             position: "fixed",
@@ -174,9 +209,19 @@ export default function Game() {
             background: "rgba(252, 181, 127, 0.92)",
             borderRadius: 6,
             pointerEvents: "none",
+            lineHeight: 1.45,
           }}
         >
-          Legacy fixed follow (` or F2 for orbit camera)
+          {useLegacyFollow && <div>Legacy fixed follow (` or F2 for orbit)</div>}
+          <div>
+            Cat: {PLAYER_CAT_MODELS[catModel]?.label ?? catModel} (3 swap)
+          </div>
+          {catModel === "quaternius" && (
+            <div>
+              Preset: {localGuestPalette.name} ({devPresetIndex + 1}/
+              {GUEST_CAT_PRESETS.length} · 2 cycle)
+            </div>
+          )}
         </div>
       )}
       <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
@@ -187,12 +232,19 @@ export default function Game() {
         ) : (
           <PlayerOrbitCamera positionRef={myPositionRef} />
         )}
-        <LocalPlayer positionRef={myPositionRef} world={TEST_WORLD} />
+        <LocalPlayer
+          positionRef={myPositionRef}
+          world={TEST_WORLD}
+          catModel={catModel}
+          guestPalette={catModel === "quaternius" ? localGuestPalette : null}
+        />
 
         {remotePlayers.map(([id, networkPosition]) => (
           <RemotePlayer
             key={id}
+            playerId={id}
             networkPosition={networkPosition}
+            catModel={catModel}
           />
         ))}
       </Canvas>

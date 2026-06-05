@@ -3,12 +3,21 @@
 import { useRef, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import { lerpPosition } from "@/lib/interpolation";
+import PlayerAvatar from "@/component/PlayerAvatar";
+import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
+import { paletteFromSeed } from "@/lib/guestCatPalette";
 
 /**
  * Remote avatar: network position (props) vs visual position (refs + useFrame).
  * Supabase updates only touch networkTarget; the mesh follows via lerp.
  */
-export default function RemotePlayer({ networkPosition }) {
+export default function RemotePlayer({
+  playerId,
+  networkPosition,
+  catModel = DEFAULT_PLAYER_CAT,
+}) {
+  const guestPalette =
+    catModel === "quaternius" && playerId ? paletteFromSeed(playerId) : null;
   const meshRef = useRef();
   const networkTarget = useRef({ ...networkPosition });
   const visualPosition = useRef({ ...networkPosition });
@@ -32,9 +41,11 @@ export default function RemotePlayer({ networkPosition }) {
   const { x, y, z } = visualPosition.current;
 
   return (
-    <mesh ref={meshRef} position={[x, y, z]} castShadow receiveShadow>
-      <boxGeometry />
-      <meshStandardMaterial color="skyblue" />
-    </mesh>
+    <group ref={meshRef} position={[x, y, z]}>
+      <PlayerAvatar
+        modelKey={catModel}
+        guestPalette={guestPalette}
+      />
+    </group>
   );
 }

@@ -12,6 +12,8 @@ import {
   worldToGrid,
 } from "@/lib/world";
 import { TILE_SIZE } from "@/lib/tileGrid";
+import PlayerAvatar from "@/component/PlayerAvatar";
+import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
 
 const MAX_SPEED = 10;
 // How fast velocity catches the input direction (lower = softer start).
@@ -128,9 +130,15 @@ function getFacingDirection(vel, speed, worldInput) {
   return null;
 }
 
-export default function LocalPlayer({ positionRef, world }) {
+export default function LocalPlayer({
+  positionRef,
+  world,
+  catModel = DEFAULT_PLAYER_CAT,
+  guestPalette,
+}) {
   const { camera } = useThree();
   const meshRef = useRef();
+  const moving01Ref = useRef(0);
   const keys = useRef({});
   const velocityRef = useRef({ x: 0, z: 0 });
   const lastForwardRef = useRef({ x: 0, z: -1 });
@@ -296,6 +304,7 @@ export default function LocalPlayer({ positionRef, world }) {
     moveIntensityRef.current +=
       (targetIntensity - moveIntensityRef.current) * smoothRate(12, delta);
     const moving01 = moveIntensityRef.current;
+    moving01Ref.current = moving01;
 
     // Phase is continuous (no per-frame frequency changes).
     movePhaseRef.current += Math.PI * 2 * MOVE_BOB_HZ * delta;
@@ -329,9 +338,12 @@ export default function LocalPlayer({ positionRef, world }) {
   const { x, y, z } = positionRef.current;
 
   return (
-    <mesh ref={meshRef} position={[x, y, z]} castShadow receiveShadow>
-      <boxGeometry />
-      <meshStandardMaterial color="hotpink" />
-    </mesh>
+    <group ref={meshRef} position={[x, y, z]}>
+      <PlayerAvatar
+        modelKey={catModel}
+        moving01Ref={moving01Ref}
+        guestPalette={guestPalette}
+      />
+    </group>
   );
 }
