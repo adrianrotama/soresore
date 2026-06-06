@@ -11,12 +11,12 @@
 
 - **Cozy direction wins (`AGENTS.md`).** ACNH-inspired pedestal silhouette, sunset palette, stable camera. If a refactor makes the world feel less cozy, push back — challenge the request.
 - **Tile pedestal is the world unit anchor.** `TILE_SIZE = 2` m XZ; `TILE_LEVEL_HEIGHT = 1.0` m Y; mesh footprint **2.082 m** (slight bleed for seamless joints). Scale OTHER assets to fit the grid, not the other way around (e.g. tune `TRAIN_SCALE`, not `TILE_SIZE`).
-- **One pedestal GLB; palette via vertex-color repaint** (`TileModel`). Don't duplicate GLBs per color. New tile **type** = new entry in `TILE_PALETTES`. New tile **shape** (sunken water, slope) = new GLB only.
-- **No PBR textures on tiles.** `MeshToonMaterial` + vertex colors only. Texture atlases break the unified palette system.
+- **One pedestal GLB; palette via vertex-color repaint** (`TileModel`) for standard types. Don't duplicate GLBs per color. New tile **type** = new entry in `TILE_PALETTES`. New tile **shape** (sunken water, slope, custom brick) = dedicated GLB via `TILE_MODEL_URLS` in `lib/tileModels.js`.
+- **Default tiles: no PBR.** `MeshToonMaterial` + vertex colors. **Exception:** types in `TILE_NATIVE_COLOR` keep authored GLB material colors (still converted to toon). Texture atlases on palette tiles break the unified system.
 - **`surfaceYAt(world, gx, gz)` is the only source of ground Y.** Decorations, player snap (Phase 4), and walkability rules (Phase 5) read from it. Never hard-code Y for tile-based content.
 - **Decoration vs Landmark.** Grid-anchored small props → `component/Decoration.js` (`{ kind, gx, gz, rotation? }`). World-anchored structures → `component/Landmark.js` (`{ kind, … }`). Example: bench on a tile = decoration; train route = landmark with `start`/`end`.
 - **All world content lives in one object** (`TEST_WORLD` in `lib/testWorld.js`). `<World data={…} />` is the single scene root for world content. No standalone scene slices — register as a decoration or landmark kind.
-- **Blender conventions** for new tile/decoration GLBs: 2.082 × 2.082 × 1.0 m for pedestals; bottom-center origin; vertex colors (top vs side) — `TileModel` Y-threshold classifier will detect. Export to `public/images/tiles/`. Props at feet-origin so `cellSurfaceWorld` drops them on tiles. Prefer **`.glb`** (single file) over `.gltf` + `.bin` for runtime props.
+- **Blender conventions** for new tile/decoration GLBs: **standard pedestal** 2.082 × 2.082 × 1.0 m; bottom-center origin; vertex colors (top vs side) — `TileModel` Y-threshold classifier will detect. **Brick sidewalk** (`brick-tiles.glb`): 2.082 × 2.082 × **2.02** m, same bottom-center pivot; rendered with `TILE_MODEL_Y_OFFSET.brick = -1` so the walk surface aligns with 1 m neighbors while grid `level` stays unchanged. Export to `public/images/tiles/`. Props at feet-origin so `cellSurfaceWorld` drops them on tiles. Prefer **`.glb`** (single file) over `.gltf` + `.bin` for runtime props.
 - **Train route Y** uses `TILE_LEVEL_HEIGHT` in `start[1]` / `end[1]` (`lib/trainRoute.js` `DEFAULT_TRAIN_ROUTE`). Don't hardcode `y = 0` for tile-surface content.
 
 Browser multiplayer 3D prototype. One tab = one player. Positions sync via **Supabase**; local + remote avatars render as **guest cats** (Quaternius GLB by default). Target: cozy low-poly world (`AGENTS.md`), not a debug scene.
@@ -42,8 +42,8 @@ Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 app/page.js                 → full-viewport <Game />
 component/Game.js           → Canvas, Supabase sync, spawn, mounts <World> + <GameAudio />
 component/World.js          → mounts <TileMap> + <Decoration>s + <Landmark>s; dev <CollisionDebug>
-component/TileMap.js        → renders 2D map array via <TileModel> per cell; adds cliff-face `TileBank`
-component/TileModel.js      → load pedestal GLB, repaint vertex colors per palette, toon material
+component/TileMap.js        → renders 2D map array via <TileModel> per cell; cliff-face `TileBank` (skipped when mesh Y-offset fills that volume)
+component/TileModel.js      → load tile GLB; palette vertex repaint OR native GLB colors (`nativeColor`); toon material
 component/StairTile.js      → procedural 4-step stair block (one level rise), rotation-able
 component/Decoration.js     → grid-anchored prop registry ({ kind, gx, gz, rotation? })
 component/Landmark.js       → world-anchored structure registry ({ kind, … })
@@ -64,7 +64,7 @@ lib/supabase.js             → Supabase client
 lib/world.js                → surfaceYAt, canMoveTo / canMoveStep (terrain + decorations), cellSurfaceWorld
 lib/decorationCollision.js  → grid footprints, buildDecorationBlockedSet, dev debug helpers
 lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld helper
-lib/tileModels.js           → TILE_PALETTES per tile type; single pedestal GLB URL
+lib/tileModels.js           → TILE_PALETTES; `TILE_MODEL_URLS`, `TILE_MODEL_Y_OFFSET`, `TILE_NATIVE_COLOR`; `tileModelUrl` / helpers
 lib/testTileMap.js          → station + coastline layout (grass/path/asphalt/brick/sand, stairs, multi-level)
 lib/testWorld.js            → bundles { map, origin, decorations, landmarks }
 lib/trainRoute.js           → DEFAULT_TRAIN_ROUTE, path sampling, fade/exit helpers
@@ -453,10 +453,24 @@ surfaceYAt    single source of truth for ground Y (decorations + future player s
 ### Tile mesh contract
 
 - **Footprint:** 2.082 × 2.082 m on XZ (~4% bleed over `TILE_SIZE = 2` — hides corner seams from rounded Kenney tops).
-- **Height:** 1.0 m (`TILE_LEVEL_HEIGHT`).
-- **Pivot:** bottom-center, origin on ground (mesh top at `+1`).
-- **Vertex colors only:** no PBR. `TileModel` discards the original `colormap` texture and bakes fresh vertex colors per palette at load.
+- **Height:** 1.0 m (`TILE_LEVEL_HEIGHT`) for standard pedestal types.
+- **Pivot:** bottom-center, origin on ground (standard mesh top at `+1`).
+- **Vertex colors (default):** `TileModel` discards the original `colormap` texture and bakes fresh vertex colors per palette at load.
 - **Cell shape:** `string` shorthand (`"grass"`) or `{ type, level?, rotation? }`. `level` is an integer Y multiplier (positive = raised, negative = sunken). `rotation` is used by stair tiles.
+
+### Custom tile GLB (`brick`)
+
+Brick sidewalk uses a dedicated mesh instead of the shared Kenney pedestal:
+
+| | Standard pedestal | `brick` |
+|--|-------------------|---------|
+| GLB | `block-grass-large.glb` | `brick-tiles.glb` (`BRICK_TILE_URL`) |
+| Height | 1.0 m | 2.02 m (authored in Blender) |
+| Colors | `TILE_PALETTES.brick` vertex repaint | `TILE_NATIVE_COLOR` — keep GLB materials → `MeshToonMaterial` |
+| Render Y | `cell.level × H` | same + `TILE_MODEL_Y_OFFSET.brick` (−1 m visual drop) |
+| Gameplay | `surfaceYAt` unchanged | still one grid cell / one level |
+
+Blender export checklist for brick: location `(0,0,0)`, bottom at Y=0, no stray object translation, apply transforms before export.
 
 ### Cliff face (`TileBank` in `TileMap.js`)
 
@@ -465,8 +479,9 @@ Every cell renders a flat-sided box ("bank") beneath its tile painted in the pal
 - Always extends **one level below** the tile (hides rounded-pedestal seams between same-level neighbors).
 - For raised tiles (`level > 0`), extends all the way down to `Y = 0` — replaces a stack of filler pedestals.
 - Uses `BoxGeometry` not the pedestal GLB, so no rounded curve at top/bottom.
+- **Skipped** when `tileModelYOffset(type) !== 0` — tall meshes (brick) already fill the bank volume; rendering both caused z-fighting below brick rows.
 
-The bank covers both `TileModel` and `StairTile` cases uniformly (stair has no internal skirt; the bank handles its column too).
+The bank covers `StairTile` and standard `TileModel` cells uniformly (stair has no internal skirt; the bank handles its column too).
 
 ### Stair tile (`component/StairTile.js`)
 
@@ -478,11 +493,12 @@ The bank covers both `TileModel` and `StairTile` cases uniformly (stair has no i
 
 ### Palette per tile type (one GLB, many types)
 
-Source: `public/images/tiles/kenney_platformer-kit/block-grass-large.glb` (Kenney pedestal, scale 1:1).
+**Default path** — source: `public/images/tiles/kenney_platformer-kit/block-grass-large.glb` (Kenney pedestal, scale 1:1).
 
 - `TileModel` clones geometry per cell, classifies vertices by Y position (`TILE_TOP_Y_RATIO = 0.8`), paints top/side colors.
 - Material: `MeshToonMaterial` with `vertexColors: true` — stepped cel-shading; sides don't crush to black under warm sunset light.
-- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `stair`, `brick`. Side stays unified tan for grass/path/sand/stair; brick uses a warm clay side (`#b07a5a`); asphalt uses muted grey. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
+- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `stair`, `brick` (palette entry kept for bank/fallback; brick render uses native GLB colors). Side stays unified tan for grass/path/sand/stair; asphalt uses muted grey. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
+- Per-type GLB override: `tileModelUrl(type)` → `TILE_MODEL_URLS[type]` ?? `PEDESTAL_TILE_URL`.
 
 ### Decorations vs Landmarks
 
@@ -522,7 +538,7 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 ## Handoff — continue here (next session)
 
-**State (2026-06-05):** **Guest cat Phase A** shipped — `PlayerAvatar`, Quaternius Idle/Walk, `GUEST_CAT_PRESETS` + per-id random colors, dev **`2`** (preset cycle) / **`3`** (model swap). Tubbs static compare kept in dev. **Konbini** landmark on test map (prior session). **Phase 4/5** movement + **Phase 5b** decoration collision unchanged from 2026-05-29 (`CollisionDebug` in dev).
+**State (2026-06-06):** **Brick sidewalk GLB** shipped — custom 2.02 m mesh, native Blender colors, visual −1 m Y offset; `TileBank` skip for offset tiles. Prior: guest cat Phase A (2026-06-05), konbini landmark, Phase 4/5 movement + decoration collision.
 
 **Guest cat — next (small PRs):**
 
@@ -601,6 +617,8 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-29):** Phase 5 terrain walkability; Phase 5b decoration grid collision (`decorationCollision.js`, `ENV_REGISTRY.collision`, `CollisionDebug`); train collision not shipped.
 
+**Done (2026-06-06):** Brick tile custom GLB (`brick-tiles.glb`) — `TILE_MODEL_URLS`, `TILE_MODEL_Y_OFFSET`, `TILE_NATIVE_COLOR`; `TileBank` skipped under offset meshes; Blender 2.02 m export contract documented.
+
 **Done (2026-06-05):** Guest cat Phase A — `PlayerAvatar.js`, `playerModels.js`, `guestCatPalette.js`, `quaterniusRecolor.js`; Quaternius Idle/Walk; 8 color presets + `paletteFromSeed`; dev `2`/`3` toggles; eye/nose UV zones tuned.
 
 **Still open (prioritized — see Handoff for full order):**
@@ -630,6 +648,12 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-06-06 — Brick sidewalk tile GLB (end of day):**
+  - `lib/tileModels.js`: `BRICK_TILE_URL` → `public/images/tiles/brick-tiles.glb`; `TILE_MODEL_URLS`, `tileModelUrl()`, `TILE_MODEL_Y_OFFSET` (brick −1 m render drop), `TILE_NATIVE_COLOR` (keep authored materials).
+  - `component/TileModel.js`: `nativeColor` prop — skip palette vertex repaint; convert GLB materials to `MeshToonMaterial`.
+  - `component/TileMap.js`: per-type URL / Y-offset / native-color wiring; preload brick GLB; skip `TileBank` when `tileModelYOffset !== 0` (fixes z-fight under 2 m brick).
+  - Map data unchanged — `"brick"` / `B` in `testTileMap.js`; gameplay `level` + `surfaceYAt` unchanged.
+  - **Blender contract:** 2.082 × 2.082 × 2.02 m, bottom-center origin, apply transforms; no runtime scale needed.
 - **2026-06-05 — Guest cat avatars (Phase A, end of day):**
   - `component/PlayerAvatar.js` (new): `useGLTF` + `SkeletonUtils.clone`, `useAnimations` Idle/Walk, toon materials, foot snap, palette recolor hook.
   - `lib/playerModels.js` (new): `quaternius` (default) + `tubbs` registry; tuned scale/rotation/footYOffset.

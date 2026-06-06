@@ -7,12 +7,17 @@ import StairTile from "@/component/StairTile";
 import { gridToWorld } from "@/lib/tileGrid";
 import {
   PEDESTAL_TILE_URL,
+  BRICK_TILE_URL,
   TILE_PALETTES,
   DEFAULT_TILE_KEY,
+  tileModelUrl,
+  tileModelYOffset,
+  tileUsesNativeColor,
 } from "@/lib/tileModels";
 import { normalizeCell, TILE_LEVEL_HEIGHT } from "@/lib/world";
 
 useGLTF.preload(PEDESTAL_TILE_URL);
+useGLTF.preload(BRICK_TILE_URL);
 
 const FOOTPRINT = 2.082;
 
@@ -43,14 +48,13 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
           if (!cell) return null;
           const [wx, baseY, wz] = gridToWorld(gx, gz, origin);
           const y = baseY + cell.level * TILE_LEVEL_HEIGHT;
+          const yOffset = tileModelYOffset(cell.type);
+          const meshY = y + yOffset;
           const key = `${gx}-${gz}-${cell.type}-${cell.level}-${cell.rotation ?? 0}`;
           const palette = paletteFor(cell.type);
 
           // Bank: solid cliff plug from `bankBottomLevel` up to the tile's base.
-          // - Always extends one level below the tile itself, so rounded-edge
-          //   seams between same-level neighbors are hidden too.
-          // - For raised tiles (level > 0), extends down to Y=0 so the whole
-          //   exposed cliff is solid.
+          // Skip when the mesh already extends below the cell base (e.g. 2 m brick).
           const bankBottomLevel = Math.min(0, cell.level) - 1;
           const bankTopLevel = cell.level;
           const bankHeight =
@@ -58,13 +62,14 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
           const bankY =
             baseY + ((bankBottomLevel + bankTopLevel) / 2) * TILE_LEVEL_HEIGHT;
 
-          const bank = (
-            <TileBank
-              color={palette.side}
-              position={[wx, bankY, wz]}
-              height={bankHeight}
-            />
-          );
+          const bank =
+            yOffset === 0 ? (
+              <TileBank
+                color={palette.side}
+                position={[wx, bankY, wz]}
+                height={bankHeight}
+              />
+            ) : null;
 
           if (cell.type === "stair") {
             return (
@@ -83,9 +88,10 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
             <Fragment key={key}>
               {bank}
               <TileModel
-                url={PEDESTAL_TILE_URL}
+                url={tileModelUrl(cell.type)}
                 palette={palette}
-                position={[wx, y, wz]}
+                position={[wx, meshY, wz]}
+                nativeColor={tileUsesNativeColor(cell.type)}
               />
             </Fragment>
           );
