@@ -8,6 +8,7 @@ import { gridToWorld } from "@/lib/tileGrid";
 import {
   PEDESTAL_TILE_URL,
   BRICK_TILE_URL,
+  WATER_TILE_URL,
   TILE_PALETTES,
   DEFAULT_TILE_KEY,
   tileModelUrl,
@@ -18,6 +19,7 @@ import { normalizeCell, TILE_LEVEL_HEIGHT } from "@/lib/world";
 
 useGLTF.preload(PEDESTAL_TILE_URL);
 useGLTF.preload(BRICK_TILE_URL);
+useGLTF.preload(WATER_TILE_URL);
 
 const FOOTPRINT = 2.082;
 
@@ -63,7 +65,7 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
             baseY + ((bankBottomLevel + bankTopLevel) / 2) * TILE_LEVEL_HEIGHT;
 
           const bank =
-            yOffset === 0 ? (
+            yOffset === 0 && cell.type !== "water" ? (
               <TileBank
                 color={palette.side}
                 position={[wx, bankY, wz]}

@@ -62,7 +62,7 @@ function pruneStalePlayers(players) {
 export default function Game() {
   const playerId = useMemo(() => crypto.randomUUID(), []);
   const guestPalette = useMemo(() => paletteFromSeed(playerId), [playerId]);
-  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 0 }
+  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 16 }
   const myPositionRef = useRef(spawn);
   /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);

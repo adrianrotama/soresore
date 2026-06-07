@@ -16,7 +16,8 @@
 - **`surfaceYAt(world, gx, gz)` is the only source of ground Y.** Decorations, player snap (Phase 4), and walkability rules (Phase 5) read from it. Never hard-code Y for tile-based content.
 - **Decoration vs Landmark.** Grid-anchored small props → `component/Decoration.js` (`{ kind, gx, gz, rotation? }`). World-anchored structures → `component/Landmark.js` (`{ kind, … }`). Example: bench on a tile = decoration; train route = landmark with `start`/`end`.
 - **All world content lives in one object** (`TEST_WORLD` in `lib/testWorld.js`). `<World data={…} />` is the single scene root for world content. No standalone scene slices — register as a decoration or landmark kind.
-- **Blender conventions** for new tile/decoration GLBs: **standard pedestal** 2.082 × 2.082 × 1.0 m; bottom-center origin; vertex colors (top vs side) — `TileModel` Y-threshold classifier will detect. **Brick sidewalk** (`brick-tiles.glb`): 2.082 × 2.082 × **2.02** m, same bottom-center pivot; rendered with `TILE_MODEL_Y_OFFSET.brick = -1` so the walk surface aligns with 1 m neighbors while grid `level` stays unchanged. Export to `public/images/tiles/`. Props at feet-origin so `cellSurfaceWorld` drops them on tiles. Prefer **`.glb`** (single file) over `.gltf` + `.bin` for runtime props.
+- **Blender conventions** for new tile/decoration GLBs: **standard pedestal** 2.082 × 2.082 × 1.0 m; bottom-center origin; vertex colors (top vs side) — `TileModel` Y-threshold classifier will detect. **Brick sidewalk** (`brick-tiles.glb`): 2.082 × 2.082 × **2.02** m, same bottom-center pivot; rendered with `TILE_MODEL_Y_OFFSET.brick = -1` so the walk surface aligns with 1 m neighbors while grid `level` stays unchanged. **Water** (`water-tiles-5.glb`): 2.082 × 2.082 × **0.04** m thin slab, bottom at Y=0, vertex-painted blues; `TILE_MODEL_Y_OFFSET.water` lifts visual (~0.6 m) while grid `level` unchanged. Export to `public/images/tiles/`. Props at feet-origin so `cellSurfaceWorld` drops them on tiles. Prefer **`.glb`** (single file) over `.gltf` + `.bin` for runtime props.
+- **Foot-snap before first paint.** `EnvironmentModel` and `TileModel` bake bbox foot-snap in `useMemo` when cloning the GLB — **not** `useLayoutEffect`. Late layout snap caused a one-frame correct Y then ~1 m drop (decorations, landmarks, tiles). New loaders must follow the same pattern.
 - **Train route Y** uses `TILE_LEVEL_HEIGHT` in `start[1]` / `end[1]` (`lib/trainRoute.js` `DEFAULT_TRAIN_ROUTE`). Don't hardcode `y = 0` for tile-surface content.
 
 Browser multiplayer 3D prototype. One tab = one player. Positions sync via **Supabase**; local + remote avatars render as **guest cats** (Quaternius GLB by default). Target: cozy low-poly world (`AGENTS.md`), not a debug scene.
@@ -43,7 +44,7 @@ app/page.js                 → full-viewport <Game />
 component/Game.js           → Canvas, Supabase sync, spawn, mounts <World> + <GameAudio />
 component/World.js          → mounts <TileMap> + <Decoration>s + <Landmark>s; dev <CollisionDebug>
 component/TileMap.js        → renders 2D map array via <TileModel> per cell; cliff-face `TileBank` (skipped when mesh Y-offset fills that volume)
-component/TileModel.js      → load tile GLB; palette vertex repaint OR native GLB colors (`nativeColor`); toon material
+component/TileModel.js      → load tile GLB; palette vertex repaint OR native GLB colors (`nativeColor`); sync foot-snap in useMemo
 component/StairTile.js      → procedural 4-step stair block (one level rise), rotation-able
 component/Decoration.js     → grid-anchored prop registry ({ kind, gx, gz, rotation? })
 component/Landmark.js       → world-anchored structure registry ({ kind, … })
@@ -58,14 +59,14 @@ lib/quaterniusRecolor.js    → paint Quaternius mesh vertex colors by UV zone (
 component/PlayerOrbitCamera.js → default orbit camera (follows player; drag to adjust)
 component/FollowCamera.js   → legacy fixed follow (dev toggle only)
 component/Environment.js    → ground, fog, lights, shadows
-component/EnvironmentModel.js → load one GLB/GLTF (useGLTF, shadows, ground snap)
+component/EnvironmentModel.js → load one GLB/GLTF (useGLTF, shadows, sync foot-snap in useMemo)
 component/GameAudio.js      → unlock Web Audio on first key/pointer; tab mute
 lib/supabase.js             → Supabase client
 lib/world.js                → surfaceYAt, canMoveTo / canMoveStep (terrain + decorations), cellSurfaceWorld
 lib/decorationCollision.js  → grid footprints, buildDecorationBlockedSet, dev debug helpers
-lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld helper
+lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld, worldZToGridGz (inverse Z for decor vs train world Z)
 lib/tileModels.js           → TILE_PALETTES; `TILE_MODEL_URLS`, `TILE_MODEL_Y_OFFSET`, `TILE_NATIVE_COLOR`; `tileModelUrl` / helpers
-lib/testTileMap.js          → station + coastline layout (grass/path/asphalt/brick/sand, stairs, multi-level)
+lib/testTileMap.js          → 30×46 layout (G2 north plateau, east river, station/coastline south, bridge deck)
 lib/testWorld.js            → bundles { map, origin, decorations, landmarks }
 lib/trainRoute.js           → DEFAULT_TRAIN_ROUTE, path sampling, fade/exit helpers
 lib/environmentModels.js    → ENV_REGISTRY (url + per-kind grid collision), ENV_MODELS URLs
@@ -299,9 +300,9 @@ Pattern: **`EnvironmentModel`** + URLs in **`lib/environmentModels.js`**. Decora
 ### Loading pattern (`EnvironmentModel.js`)
 
 - `useGLTF(url)` from `@react-three/drei` (cached per URL). Works with `.glb` and `.gltf` (`.gltf` needs sibling `.bin` + textures in the same folder).
-- `scene.clone(true)` per instance; meshes get `castShadow` / `receiveShadow`.
-- Ground snap: subtract bounding-box `min.y` so the model sits on `y = 0`.
-- Props: `position`, `rotation` (radians), `scale` (number or `[x,y,z]`).
+- `prepareEnvironmentModel(scene)` in **`useMemo`**: clone, shadow flags, bbox foot-snap (`position.y -= box.min.y`) **before first paint**.
+- Parent group gets `position` / `rotation` / `scale` from props; mesh feet sit on local `y = 0` → `cellSurfaceWorld` Y in world space.
+- **Do not** foot-snap in `useLayoutEffect` — causes visible one-frame drop after load.
 - **Prefer `.glb`** for new assets (one HTTP request, no sidecar hunt).
 
 ### Assets (`public/images/environments/`)
@@ -375,7 +376,7 @@ No procedural track — place in `testWorld.js` like other props.
 - Tuned in `RailCrossingProp`: `scale={0.02}` (asset is large in file units — do not copy straight-rail scale).
 - Optional `rotation` / `offset` on the decoration entry for path junctions.
 
-**Station tile paint (`testTileMap.js`):** dirt train bed (`gz` 4–5), **asphalt** center strip (`gx` 8–10, rows 2–16), **path** platforms and crossings around it; player spawn row ~`gz` 9. Map **24×28**, origin `[-10, 0, -20]`.
+**Station tile paint (`testTileMap.js`):** dirt train bed south, **asphalt** center strip, **path** platforms; train route at world `z ≈ 40` (`DEFAULT_TRAIN_ROUTE` in `trainRoute.js`). Rail decor `gz` uses `worldZToGridGz(worldZ, origin[2])` — must include `TILE_SIZE/2` offset to match `gridToWorld` cell centers (integer division alone is wrong by 0.5 cell). Map **30×46**, origin `[-10, 0, -20]`.
 
 ### Decorations (`component/Decoration.js`)
 
@@ -428,7 +429,7 @@ Static props can block movement via **`ENV_REGISTRY[kind].collision`** in `lib/e
 
 **Not done (collision — see Handoff):** sub-tile / red-box blocking; railing accuracy; white-tile pass-through bug; hot-reload of `decorationBlocked` without restart.
 
-**Not done (decorations):** animated crossing gates; surface footstep zones; station hut landmark (GLB on disk, not wired).
+**Not done (decorations):** `bridge-log.glb` (map deck ready gz 20–21, Blender in progress); animated crossing gates; surface footstep zones; station hut landmark (GLB on disk, not wired).
 
 **Konbini landmark (2026-06):** `japaneseStore.glb` via `KonbiniLandmark.js` — grid collision, `Text3D` sign (`Sore-Sore`). See `testWorld.js` konbini entry; not fully re-documented here.
 
@@ -472,6 +473,19 @@ Brick sidewalk uses a dedicated mesh instead of the shared Kenney pedestal:
 
 Blender export checklist for brick: location `(0,0,0)`, bottom at Y=0, no stray object translation, apply transforms before export.
 
+### Custom tile GLB (`water`)
+
+| | Standard pedestal | `water` |
+|--|-------------------|---------|
+| GLB | `block-grass-large.glb` | `water-tiles-5.glb` (`WATER_TILE_URL`) |
+| Height | 1.0 m | 0.04 m thin slab |
+| Colors | palette vertex repaint | `TILE_NATIVE_COLOR` — vertex paint `COLOR_0` → `MeshToonMaterial` + `vertexColors: true` |
+| Render Y | `cell.level × H` | same + `TILE_MODEL_Y_OFFSET.water` (~0.6 m visual sink below grass tops) |
+| Gameplay | walkable | **`water` non-walkable** in `canMoveStep` / `TILE_INFO` |
+| `TileBank` | rendered | **skipped** (like offset brick — thin slab, no cliff plug) |
+
+Authored like water v5: footprint 2.082 × 2.082, bottom pivot Y=0 (not centered slab). Palette entry in `TILE_PALETTES.water` is fallback only.
+
 ### Cliff face (`TileBank` in `TileMap.js`)
 
 Every cell renders a flat-sided box ("bank") beneath its tile painted in the palette `side` color:
@@ -479,7 +493,7 @@ Every cell renders a flat-sided box ("bank") beneath its tile painted in the pal
 - Always extends **one level below** the tile (hides rounded-pedestal seams between same-level neighbors).
 - For raised tiles (`level > 0`), extends all the way down to `Y = 0` — replaces a stack of filler pedestals.
 - Uses `BoxGeometry` not the pedestal GLB, so no rounded curve at top/bottom.
-- **Skipped** when `tileModelYOffset(type) !== 0` — tall meshes (brick) already fill the bank volume; rendering both caused z-fighting below brick rows.
+- **Skipped** when `tileModelYOffset(type) !== 0` **or** `cell.type === "water"` — tall/offset meshes and thin water slabs don't need the plug.
 
 The bank covers `StairTile` and standard `TileModel` cells uniformly (stair has no internal skirt; the bank handles its column too).
 
@@ -497,7 +511,7 @@ The bank covers `StairTile` and standard `TileModel` cells uniformly (stair has 
 
 - `TileModel` clones geometry per cell, classifies vertices by Y position (`TILE_TOP_Y_RATIO = 0.8`), paints top/side colors.
 - Material: `MeshToonMaterial` with `vertexColors: true` — stepped cel-shading; sides don't crush to black under warm sunset light.
-- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `stair`, `brick` (palette entry kept for bank/fallback; brick render uses native GLB colors). Side stays unified tan for grass/path/sand/stair; asphalt uses muted grey. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
+- Types in `lib/tileModels.js` `TILE_PALETTES`: `grass`, `path`, `sand`, `dirt`, `asphalt`, `stair`, `brick`, `water` (brick/water render uses native GLB colors when in `TILE_NATIVE_COLOR`). Side stays unified tan for grass/path/sand/stair; asphalt uses muted grey. Unknown keys fall back to `DEFAULT_TILE_KEY` (`grass`) in `TileMap`.
 - Per-type GLB override: `tileModelUrl(type)` → `TILE_MODEL_URLS[type]` ?? `PEDESTAL_TILE_URL`.
 
 ### Decorations vs Landmarks
@@ -516,12 +530,13 @@ Both registered together in `world` data (`testWorld.js`). `World` renders both.
 ### `surfaceYAt` contract
 
 ```js
-surfaceYAt(world, gx, gz) → (cell.level + 1) * TILE_LEVEL_HEIGHT
+surfaceYAt(world, gx, gz) → world.origin[1] + (cell.level + 1) * TILE_LEVEL_HEIGHT
 ```
 
-- Level 0 → Y = 1.0 (top of one pedestal)
-- Level N → Y = (N+1) * 1.0 (Phase 2+ — not rendered yet)
-- Out of map → Y = 0 (ambient ground)
+- Level 0 → Y = `origin[1]` + 1.0 (top of one pedestal; origin `[1]` usually 0)
+- Level N → Y = `origin[1]` + (N+1) × `TILE_LEVEL_HEIGHT`
+- Out of map → Y = `world.origin[1]` (ambient ground)
+- **Player walk height** follows tiles, not decoration meshes — bridge deck is flat path at Y=1.0; arched stringers are visual-only underneath.
 
 Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a prop. Fractional `gx`/`gz` are allowed; `getCell` floors indices for surface Y.
 
@@ -538,7 +553,22 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 ## Handoff — continue here (next session)
 
-**State (2026-06-06):** **Brick sidewalk GLB** shipped — custom 2.02 m mesh, native Blender colors, visual −1 m Y offset; `TileBank` skip for offset tiles. Prior: guest cat Phase A (2026-06-05), konbini landmark, Phase 4/5 movement + decoration collision.
+**State (2026-06-07):** **Inland east river** + **water tile v5** shipped; **foot-snap regression fixed** (decorations, landmarks, tiles stable on first frame). **Log bridge** — map deck at gz 20–21 (`P,P,P,P` gx 14–17); Blender asset `bridge-log.glb` **not wired yet** (ACNH arched stringer style, flat deck Y=1.0).
+
+**Done today (2026-06-07):**
+- `water-tiles-5.glb`: 2.082 × 0.04 m, bottom Y=0, vertex blues; `TILE_NATIVE_COLOR`; `TILE_MODEL_Y_OFFSET.water` ≈ 0.6.
+- `lib/testTileMap.js`: **30×46**; G2 plateau gz 0–11; **east river** N–S at gx 15–16 (`W`), path banks gx 14 & 17; widening + path crossing south; **bridge deck** rows gz 20–21.
+- `lib/world.js`: `water` blocked in `canMoveStep`; `surfaceYAt` includes `world.origin[1]`.
+- `component/EnvironmentModel.js` + `component/TileModel.js`: foot-snap moved to sync `useMemo` (`prepareEnvironmentModel` / `prepareTileModel`) — fixes post-load Y drop.
+- `lib/tileGrid.js`: `worldZToGridGz` for train/rail decor alignment vs `gridToWorld` half-cell centers.
+- `lib/testWorld.js`: konbini Y via `cellSurfaceWorld`; rail origin from `worldZToGridGz(DEFAULT_TRAIN_ROUTE.start[2], …)`.
+
+**Bridge — continue next session:**
+1. Finish `public/images/environments/bridge-log.glb` in Blender (8.328 × 4.164 m footprint, deck top Y=1.0, arched 6-sided stringers below, vertex paint, ~400–600 tris).
+2. Wire: `ENV_REGISTRY.bridge` → `Decoration.js` `bridge` kind → `testWorld.js` at `gx: 15.5, gz: 20.5`.
+3. Optional: bridge `collision` on deck cells only (path tiles already walkable).
+
+**Prior (2026-06-06):** Brick sidewalk GLB; guest cat Phase A (2026-06-05); konbini landmark; Phase 4/5 movement + decoration collision.
 
 **Guest cat — next (small PRs):**
 
@@ -568,7 +598,7 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 4. **Train** — no collision; walk through consist.
 
 **Open bugs (carry over from earlier):**
-- **"World objects rendered below tiles"** — was reduced 2026-05-28 via `worldToGrid` / `gridToCellIndex`. **Regressed 2026-05-29** — reported **more often** after today's walkability + decoration collision work (not fully diagnosed). Suspects for next session: player stopped at cell edges by `canMoveTo` / axis-slide while `surfaceYAt` still samples a neighboring cell; fractional `gx/gz` vs `Math.floor` in `getCell` vs decoration placement; props on stairs / multi-level lookout (`level` mismatch). Repro: note `gx/gz`, tile type, and which prop kinds sink; compare `worldToGrid` output to decoration `gx/gz` conventions.
+- ~~**"World objects rendered below tiles"**~~ — **fixed 2026-06-07.** Root cause: `useLayoutEffect` foot-snap in `EnvironmentModel` / `TileModel` ran after first paint (brief correct Y, then bbox drop). Also: landmarks on raised cells need `cellSurfaceWorld` / `surfaceYAt` (not hardcoded `TILE_LEVEL_HEIGHT`); rail `gz` needed `worldZToGridGz` half-cell offset. Reopen if a new loader uses late layout snap or hardcoded Y.
 - **Render cost doubled per cell** (pedestal + bank) — Phase 6.
 - **`StairTile` procedural** — GLB swap pending.
 
@@ -576,9 +606,9 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 1. ~~**PR 4 — Phase 4: player ground-snap.**~~ ✅ 2026-05-28.
 2. ~~**PR 5 — Phase 5: walkability rules.**~~ ✅ 2026-05-29.
-3. **PR 5b (follow-up) — Decoration collision polish.** Fix same-cell pass-through in `canMoveTo`; tune railings (`railing2.glb`, `offset`, `cellsX` along edge); decide if thin props need red-box / sub-tile blocking; optional rebuild `decorationBlocked` on hot reload in dev. **Also:** investigate **objects-below-tiles** regression (may share root cause with grid sampling / movement blocking).
+3. **PR 5b (follow-up) — Decoration collision polish.** Fix same-cell pass-through in `canMoveTo`; tune railings (`railing2.glb`, `offset`, `cellsX` along edge); decide if thin props need red-box / sub-tile blocking; optional rebuild `decorationBlocked` on hot reload in dev.
 4. **PR 6 — Tile rendering optimization.** InstancedMesh for pedestal + bank; taller cliff GLB optional.
-5. **PR 7 — Coastline polish.**  utility pole, signs, Add sea tiles; tactile paving trim; crosswalk tuning.
+5. **PR 7 — River + coastline.** ~~Inland east river + water tile~~ ✅ 2026-06-07. **Next:** wire `bridge-log.glb`; south sea strip; utility pole, signs; tactile paving trim.
 6. ~~**PR 8 — Konbini landmark.**~~ ✅ ~2026-06 (basic building + sign + collision).
 7. **PR 8b — Guest cat polish** — remote walk, appearance persistence, emotes (see Guest cat section).
 8. **PR 9 — Stair GLB swap.**
@@ -617,6 +647,8 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-29):** Phase 5 terrain walkability; Phase 5b decoration grid collision (`decorationCollision.js`, `ENV_REGISTRY.collision`, `CollisionDebug`); train collision not shipped.
 
+**Done (2026-06-07):** Inland east river (`testTileMap` 30×46, G2 plateau, water at gx 15–16); `water-tiles-5.glb` + walk block; sync foot-snap fix (`EnvironmentModel`, `TileModel`); `worldZToGridGz`; bridge deck map rows gz 20–21 (GLB pending).
+
 **Done (2026-06-06):** Brick tile custom GLB (`brick-tiles.glb`) — `TILE_MODEL_URLS`, `TILE_MODEL_Y_OFFSET`, `TILE_NATIVE_COLOR`; `TileBank` skipped under offset meshes; Blender 2.02 m export contract documented.
 
 **Done (2026-06-05):** Guest cat Phase A — `PlayerAvatar.js`, `playerModels.js`, `guestCatPalette.js`, `quaterniusRecolor.js`; Quaternius Idle/Walk; 8 color presets + `paletteFromSeed`; dev `2`/`3` toggles; eye/nose UV zones tuned.
@@ -627,7 +659,7 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 2. ✅ PR 5 — Phase 5 walkability rules (`canMoveTo`) (2026-05-29).
 3. **PR 5b (partial)** — Decoration grid collision + `CollisionDebug` (2026-05-29); polish open (railings, pass-through).
 4. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
-5. PR 7 — Coastline polish (utility pole, signs, sea tiles; fix "objects below tiles" bug).
+5. **PR 7 — River + coastline** — inland river ✅; bridge GLB + wire next; sea tiles south; utility pole, signs.
 6. ~~PR 8 — Konbini landmark.~~ ✅ ~2026-06.
 7. **PR 8b — Guest cat polish** (remote walk, appearance save, emotes).
 8. PR 9 — Stair GLB swap (Kenney wedge).
@@ -648,6 +680,17 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-06-07 — East river, water tile, foot-snap fix (end of day):**
+  - `lib/tileModels.js`: `WATER_TILE_URL` → `water-tiles-5.glb`; `TILE_MODEL_Y_OFFSET.water` (~0.6); `TILE_NATIVE_COLOR.water`; `TILE_INFO.water` walkable false.
+  - `component/TileModel.js`: `prepareTileModel` in `useMemo` (recolor + foot-snap before paint); `toToonMaterial` sets `vertexColors: true` when GLB uses vertex paint.
+  - `component/TileMap.js`: water preload; skip `TileBank` for `water` and offset types.
+  - `lib/world.js`: `canMoveStep` blocks `water`; `surfaceYAt` adds `world.origin[1]`.
+  - `lib/testTileMap.js`: map **30×46**; G2 north rows; east river channel gx 14–17 (`P–W–W–P` banks); bridge crossing deck gz 20–21 (`P,P,P,P` over channel).
+  - `lib/testWorld.js`: konbini `cellSurfaceWorld`; `worldZToGridGz` for `railRoadOrigin`; river-bank / park decor retuned.
+  - `component/EnvironmentModel.js`: `prepareEnvironmentModel` in `useMemo` — fixes decoration/landmark one-frame sink.
+  - `lib/tileGrid.js`: `worldZToGridGz(wz, originZ)` — inverse of `gridToWorld` Z (fractional gz for cell centers).
+  - **Bridge (in progress):** Blender spec ACNH log arch, flat deck Y=1.0, vertex-only planks, 6-sided logs; export `bridge-log.glb`; not in repo wiring yet.
+  - **Fixed:** intermittent props/tiles rendering ~1 m low after load (late `useLayoutEffect` bbox snap).
 - **2026-06-06 — Brick sidewalk tile GLB (end of day):**
   - `lib/tileModels.js`: `BRICK_TILE_URL` → `public/images/tiles/brick-tiles.glb`; `TILE_MODEL_URLS`, `tileModelUrl()`, `TILE_MODEL_Y_OFFSET` (brick −1 m render drop), `TILE_NATIVE_COLOR` (keep authored materials).
   - `component/TileModel.js`: `nativeColor` prop — skip palette vertex repaint; convert GLB materials to `MeshToonMaterial`.

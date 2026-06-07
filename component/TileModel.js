@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useLayoutEffect, useRef } from "react";
+import { useMemo } from "react";
 import { useGLTF } from "@react-three/drei";
 import {
   Box3,
@@ -11,12 +11,79 @@ import {
 import { TILE_TOP_Y_RATIO } from "@/lib/tileModels";
 
 function toToonMaterial(source) {
+  const vertexColors = source.vertexColors === true;
   return new MeshToonMaterial({
-    color: source.color?.clone?.() ?? source.color ?? "#ffffff",
+    // Vertex-painted GLBs (e.g. water) need vertexColors; brick uses per-mesh material.color.
+    color: vertexColors
+      ? "#ffffff"
+      : (source.color?.clone?.() ?? source.color ?? "#ffffff"),
     map: source.map ?? null,
+    vertexColors,
     transparent: source.transparent,
     opacity: source.opacity ?? 1,
   });
+}
+
+/** Clone, recolor, and foot-snap before first paint (avoids useLayoutEffect drop). */
+function prepareTileModel(scene, { palette, nativeColor }) {
+  const model = scene.clone(true);
+
+  if (nativeColor) {
+    model.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      if (Array.isArray(child.material)) {
+        child.material = child.material.map(toToonMaterial);
+      } else {
+        child.material = toToonMaterial(child.material);
+      }
+    });
+  } else {
+    const topColor = new Color(palette.top);
+    const sideColor = new Color(palette.side);
+
+    let meshMaxY = -Infinity;
+    let meshMinY = Infinity;
+    model.traverse((child) => {
+      if (!child.isMesh || !child.geometry?.attributes?.position) return;
+      const pos = child.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i);
+        if (y > meshMaxY) meshMaxY = y;
+        if (y < meshMinY) meshMinY = y;
+      }
+    });
+    const span = meshMaxY - meshMinY || 1;
+    const topThreshold = meshMinY + span * TILE_TOP_Y_RATIO;
+
+    model.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+
+      child.geometry = child.geometry.clone();
+      const pos = child.geometry.attributes.position;
+      const colors = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i);
+        const c = y >= topThreshold ? topColor : sideColor;
+        colors[i * 3] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+      }
+      child.geometry.setAttribute("color", new BufferAttribute(colors, 3));
+
+      child.material = new MeshToonMaterial({
+        vertexColors: true,
+      });
+      child.material.needsUpdate = true;
+    });
+  }
+
+  const box = new Box3().setFromObject(model);
+  model.position.y -= box.min.y;
+  return model;
 }
 
 /**
@@ -42,79 +109,18 @@ export default function TileModel({
   scale = 1,
   nativeColor = false,
 }) {
-  const groupRef = useRef();
   const { scene } = useGLTF(url);
 
-  const model = useMemo(() => scene.clone(true), [scene]);
-
-  useLayoutEffect(() => {
-    if (nativeColor) {
-      model.traverse((child) => {
-        if (!child.isMesh) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
-        if (Array.isArray(child.material)) {
-          child.material = child.material.map(toToonMaterial);
-        } else {
-          child.material = toToonMaterial(child.material);
-        }
-      });
-    } else {
-      const topColor = new Color(palette.top);
-      const sideColor = new Color(palette.side);
-
-      let meshMaxY = -Infinity;
-      let meshMinY = Infinity;
-      model.traverse((child) => {
-        if (!child.isMesh || !child.geometry?.attributes?.position) return;
-        const pos = child.geometry.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-          const y = pos.getY(i);
-          if (y > meshMaxY) meshMaxY = y;
-          if (y < meshMinY) meshMinY = y;
-        }
-      });
-      const span = meshMaxY - meshMinY || 1;
-      const topThreshold = meshMinY + span * TILE_TOP_Y_RATIO;
-
-      model.traverse((child) => {
-        if (!child.isMesh) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
-
-        child.geometry = child.geometry.clone();
-        const pos = child.geometry.attributes.position;
-        const colors = new Float32Array(pos.count * 3);
-        for (let i = 0; i < pos.count; i++) {
-          const y = pos.getY(i);
-          const c = y >= topThreshold ? topColor : sideColor;
-          colors[i * 3] = c.r;
-          colors[i * 3 + 1] = c.g;
-          colors[i * 3 + 2] = c.b;
-        }
-        child.geometry.setAttribute("color", new BufferAttribute(colors, 3));
-
-        child.material = new MeshToonMaterial({
-          vertexColors: true,
-        });
-        child.material.needsUpdate = true;
-      });
-    }
-
-    const box = new Box3().setFromObject(model);
-    model.position.y -= box.min.y;
-  }, [model, palette.top, palette.side, nativeColor]);
+  const model = useMemo(
+    () => prepareTileModel(scene, { palette, nativeColor }),
+    [scene, palette.top, palette.side, nativeColor],
+  );
 
   const scaleProp =
     typeof scale === "number" ? [scale, scale, scale] : scale;
 
   return (
-    <group
-      ref={groupRef}
-      position={position}
-      rotation={rotation}
-      scale={scaleProp}
-    >
+    <group position={position} rotation={rotation} scale={scaleProp}>
       <primitive object={model} />
     </group>
   );
