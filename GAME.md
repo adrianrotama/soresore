@@ -13,7 +13,7 @@
 - **Tile pedestal is the world unit anchor.** `TILE_SIZE = 2` m XZ; `TILE_LEVEL_HEIGHT = 1.0` m Y; mesh footprint **2.082 m** (slight bleed for seamless joints). Scale OTHER assets to fit the grid, not the other way around (e.g. tune `TRAIN_SCALE`, not `TILE_SIZE`).
 - **One pedestal GLB; palette via vertex-color repaint** (`TileModel`) for standard types. Don't duplicate GLBs per color. New tile **type** = new entry in `TILE_PALETTES`. New tile **shape** (sunken water, slope, custom brick) = dedicated GLB via `TILE_MODEL_URLS` in `lib/tileModels.js`.
 - **Default tiles: no PBR.** `MeshToonMaterial` + vertex colors. **Exception:** types in `TILE_NATIVE_COLOR` keep authored GLB material colors (still converted to toon). Texture atlases on palette tiles break the unified system.
-- **`surfaceYAt(world, gx, gz)` is the only source of ground Y.** Decorations, player snap (Phase 4), and walkability rules (Phase 5) read from it. Never hard-code Y for tile-based content.
+- **Ground Y:** `surfaceYAt` = tile top (decorations / `cellSurfaceWorld`). `walkSurfaceYAt` = player ground-snap (+ optional `cell.surfaceYOffset`). Never hard-code Y for tile-based content.
 - **Decoration vs Landmark.** Grid-anchored small props → `component/Decoration.js` (`{ kind, gx, gz, rotation? }`). World-anchored structures → `component/Landmark.js` (`{ kind, … }`). Example: bench on a tile = decoration; train route = landmark with `start`/`end`.
 - **All world content lives in one object** (`TEST_WORLD` in `lib/testWorld.js`). `<World data={…} />` is the single scene root for world content. No standalone scene slices — register as a decoration or landmark kind.
 - **Blender conventions** for new tile/decoration GLBs: **standard pedestal** 2.082 × 2.082 × 1.0 m; bottom-center origin; vertex colors (top vs side) — `TileModel` Y-threshold classifier will detect. **Brick sidewalk** (`brick-tiles.glb`): 2.082 × 2.082 × **2.02** m, same bottom-center pivot; rendered with `TILE_MODEL_Y_OFFSET.brick = -1` so the walk surface aligns with 1 m neighbors while grid `level` stays unchanged. **Water** (`water-tiles-5.glb`): 2.082 × 2.082 × **0.04** m thin slab, bottom at Y=0, vertex-painted blues; `TILE_MODEL_Y_OFFSET.water` lifts visual (~0.6 m) while grid `level` unchanged. Export to `public/images/tiles/`. Props at feet-origin so `cellSurfaceWorld` drops them on tiles. Prefer **`.glb`** (single file) over `.gltf` + `.bin` for runtime props.
@@ -62,7 +62,7 @@ component/Environment.js    → ground, fog, lights, shadows
 component/EnvironmentModel.js → load one GLB/GLTF (useGLTF, shadows, sync foot-snap in useMemo)
 component/GameAudio.js      → unlock Web Audio on first key/pointer; tab mute
 lib/supabase.js             → Supabase client
-lib/world.js                → surfaceYAt, canMoveTo / canMoveStep (terrain + decorations), cellSurfaceWorld
+lib/world.js                → surfaceYAt, walkSurfaceYAt, canMoveTo / canMoveStep, cellSurfaceWorld
 lib/decorationCollision.js  → grid footprints, buildDecorationBlockedSet, dev debug helpers
 lib/tileGrid.js             → TILE_SIZE = 2, gridToWorld, worldZToGridGz (inverse Z for decor vs train world Z)
 lib/tileModels.js           → TILE_PALETTES; `TILE_MODEL_URLS`, `TILE_MODEL_Y_OFFSET`, `TILE_NATIVE_COLOR`; `tileModelUrl` / helpers
@@ -329,6 +329,7 @@ Pattern: **`EnvironmentModel`** + URLs in **`lib/environmentModels.js`**. Decora
 | `hedgeStraight` / `hedgeStraightLong` / `hedgeCorner` | `hedge_*.gltf` | Decoration (park borders) |
 | `vendingMachine` | `vending_machine.glb` | Decoration (coastline lookout) |
 | `railing` | `railing.glb` | Decoration (lookout sea-edge handrail) |
+| `bridge` | `bridge-log-2.glb` | East river log bridge (`Decoration.js`; deck offset in `testWorld.js`) |
 | `tactilePaving` / `crosswalkStripe` | inline `FlatStripProp` (no GLB) | Painted road overlays |
 
 Kenney nature/hedge props ship as `.gltf` + `.bin` under `public/images/environments/` (same loader as Tiny Treats).
@@ -429,7 +430,7 @@ Static props can block movement via **`ENV_REGISTRY[kind].collision`** in `lib/e
 
 **Not done (collision — see Handoff):** sub-tile / red-box blocking; railing accuracy; white-tile pass-through bug; hot-reload of `decorationBlocked` without restart.
 
-**Not done (decorations):** `bridge-log.glb` (map deck ready gz 20–21, Blender in progress); animated crossing gates; surface footstep zones; station hut landmark (GLB on disk, not wired).
+**Not done (decorations):** animated crossing gates; surface footstep zones; station hut landmark (GLB on disk, not wired). ~~Bridge~~ ✅ 2026-06-08 (`bridge-log-2.glb`, ford tiles `BP`/`BW`).
 
 **Konbini landmark (2026-06):** `japaneseStore.glb` via `KonbiniLandmark.js` — grid collision, `Text3D` sign (`Sore-Sore`). See `testWorld.js` konbini entry; not fully re-documented here.
 
@@ -486,6 +487,19 @@ Blender export checklist for brick: location `(0,0,0)`, bottom at Y=0, no stray 
 
 Authored like water v5: footprint 2.082 × 2.082, bottom pivot Y=0 (not centered slab). Palette entry in `TILE_PALETTES.water` is fallback only.
 
+### Bridge ford cells (`BP` / `BW` in `testTileMap.js`)
+
+East river crossing gz 20–21, gx 14–17 (4×2 cells under `bridge-log-2.glb`):
+
+| Cell | Map helper | Visual | Walk |
+|------|------------|--------|------|
+| Center span | `BW` | `water` mesh | `walkable: true` |
+| Bank under rails | `BP` | `path` mesh | `walkable: true` + same lift |
+
+Both share `surfaceYOffset: BRIDGE_WALK_SURFACE_LIFT` (~0.22 m playtest) — lifts **player only** via `walkSurfaceYAt`. Decoration anchor uses `surfaceYAt` (tile top Y=1.0) + `BRIDGE_DECK_OFFSET_Y` (~0.8 m) in `testWorld.js`. **Do not** put walk lift on `surfaceYAt` — it moved bridge mesh and cat together.
+
+`EnvironmentModel` foot-snap anchors mesh bbox bottom; uniform Blender Z/Y moves **cancel** in-game (adjust `offset`, not mesh position).
+
 ### Cliff face (`TileBank` in `TileMap.js`)
 
 Every cell renders a flat-sided box ("bank") beneath its tile painted in the palette `side` color:
@@ -527,18 +541,23 @@ Both registered together in `world` data (`testWorld.js`). `World` renders both.
 
 `Game.js`: `{ x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 0 }` at world origin. Train route and decorations use `TILE_LEVEL_HEIGHT` for Y on the tile surface.
 
-### `surfaceYAt` contract
+### `surfaceYAt` / `walkSurfaceYAt` contract
 
 ```js
-surfaceYAt(world, gx, gz) → world.origin[1] + (cell.level + 1) * TILE_LEVEL_HEIGHT
+surfaceYAt(world, gx, gz)
+  → world.origin[1] + (cell.level + 1) * TILE_LEVEL_HEIGHT   // tile top; stairs → upper landing
+
+walkSurfaceYAt(world, gx, gz)
+  → surfaceYAt(...) + (cell.surfaceYOffset ?? 0)             // player snap only (not decorations)
 ```
 
-- Level 0 → Y = `origin[1]` + 1.0 (top of one pedestal; origin `[1]` usually 0)
-- Level N → Y = `origin[1]` + (N+1) × `TILE_LEVEL_HEIGHT`
-- Out of map → Y = `world.origin[1]` (ambient ground)
-- **Player walk height** follows tiles, not decoration meshes — bridge deck is flat path at Y=1.0; arched stringers are visual-only underneath.
+- Level 0 → tile top Y = `origin[1]` + 1.0 (origin `[1]` usually 0)
+- Out of map → Y = `world.origin[1]`
+- **`cellSurfaceWorld`** / decorations → `surfaceYAt` (no `surfaceYOffset`)
+- **`LocalPlayer`** ground-snap → `walkSurfaceYAt` (+ `PLAYER_FOOT_OFFSET`)
+- Optional per-cell fields: `walkable: true|false` override; `surfaceYOffset` (bridge ford)
 
-Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a prop. Fractional `gx`/`gz` are allowed; `getCell` floors indices for surface Y.
+Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 
 ### Not done (phases — see Handoff for priority)
 
@@ -553,22 +572,21 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 ## Handoff — continue here (next session)
 
-**State (2026-06-07):** **Inland east river** + **water tile v5** shipped; **foot-snap regression fixed** (decorations, landmarks, tiles stable on first frame). **Log bridge** — map deck at gz 20–21 (`P,P,P,P` gx 14–17); Blender asset `bridge-log.glb` **not wired yet** (ACNH arched stringer style, flat deck Y=1.0).
+**State (2026-06-08):** **East river log bridge shipped** — `bridge-log-2.glb`, ford tiles `BP`/`BW`, `walkSurfaceYAt` for deck-height player snap. Prior: inland river + water v5 + sync foot-snap (2026-06-07).
 
-**Done today (2026-06-07):**
-- `water-tiles-5.glb`: 2.082 × 0.04 m, bottom Y=0, vertex blues; `TILE_NATIVE_COLOR`; `TILE_MODEL_Y_OFFSET.water` ≈ 0.6.
-- `lib/testTileMap.js`: **30×46**; G2 plateau gz 0–11; **east river** N–S at gx 15–16 (`W`), path banks gx 14 & 17; widening + path crossing south; **bridge deck** rows gz 20–21.
-- `lib/world.js`: `water` blocked in `canMoveStep`; `surfaceYAt` includes `world.origin[1]`.
-- `component/EnvironmentModel.js` + `component/TileModel.js`: foot-snap moved to sync `useMemo` (`prepareEnvironmentModel` / `prepareTileModel`) — fixes post-load Y drop.
-- `lib/tileGrid.js`: `worldZToGridGz` for train/rail decor alignment vs `gridToWorld` half-cell centers.
-- `lib/testWorld.js`: konbini Y via `cellSurfaceWorld`; rail origin from `worldZToGridGz(DEFAULT_TRAIN_ROUTE.start[2], …)`.
+**Done (2026-06-08) — bridge crossing:**
+- `public/images/environments/bridge-log-2.glb` — Style 3+ plank bridge (8.328 × 4.164 m); wired as `bridge` decoration at `gx: 15.5, gz: 20.5`.
+- `lib/testTileMap.js`: ford row gz 20–21 `BP, BW, BW, BP` (gx 14–17); `BRIDGE_WALK_SURFACE_LIFT` (~0.22).
+- `lib/testWorld.js`: `BRIDGE_DECK_OFFSET_Y` (~0.8) — mesh Y tune (code-only; Blender uniform moves cancel via foot-snap).
+- `lib/world.js`: `walkSurfaceYAt` (player) vs `surfaceYAt` (decorations); `walkable` + `surfaceYOffset` on cells; `isCellWalkable`.
+- `component/LocalPlayer.js`: ground-snap uses `walkSurfaceYAt`.
+- `component/Decoration.js` + `lib/environmentModels.js`: `BridgeProp` / `bridge` kind.
 
-**Bridge — continue next session:**
-1. Finish `public/images/environments/bridge-log.glb` in Blender (8.328 × 4.164 m footprint, deck top Y=1.0, arched 6-sided stringers below, vertex paint, ~400–600 tris).
-2. Wire: `ENV_REGISTRY.bridge` → `Decoration.js` `bridge` kind → `testWorld.js` at `gx: 15.5, gz: 20.5`.
-3. Optional: bridge `collision` on deck cells only (path tiles already walkable).
+**Prior (2026-06-07):** `water-tiles-5.glb`; 30×46 map + east river; foot-snap `useMemo` fix; `worldZToGridGz`; objects-below-tiles fixed.
 
-**Prior (2026-06-06):** Brick sidewalk GLB; guest cat Phase A (2026-06-05); konbini landmark; Phase 4/5 movement + decoration collision.
+**Next (world):**
+1. **PR 7 follow-up** — south sea strip; coast signs; optional Style 3+ bridge mesh polish in Blender v3.
+2. Bridge v2 Blender: export min Y=0 in glTF for clean contract (optional — offset tuning works today).
 
 **Guest cat — next (small PRs):**
 
@@ -608,7 +626,7 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 2. ~~**PR 5 — Phase 5: walkability rules.**~~ ✅ 2026-05-29.
 3. **PR 5b (follow-up) — Decoration collision polish.** Fix same-cell pass-through in `canMoveTo`; tune railings (`railing2.glb`, `offset`, `cellsX` along edge); decide if thin props need red-box / sub-tile blocking; optional rebuild `decorationBlocked` on hot reload in dev.
 4. **PR 6 — Tile rendering optimization.** InstancedMesh for pedestal + bank; taller cliff GLB optional.
-5. **PR 7 — River + coastline.** ~~Inland east river + water tile~~ ✅ 2026-06-07. **Next:** wire `bridge-log.glb`; south sea strip; utility pole, signs; tactile paving trim.
+5. **PR 7 — River + coastline.** ~~Inland east river + water tile + log bridge~~ ✅ 2026-06-08. **Next:** south sea strip; utility pole, signs; tactile paving trim.
 6. ~~**PR 8 — Konbini landmark.**~~ ✅ ~2026-06 (basic building + sign + collision).
 7. **PR 8b — Guest cat polish** — remote walk, appearance persistence, emotes (see Guest cat section).
 8. **PR 9 — Stair GLB swap.**
@@ -647,7 +665,9 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 
 **Done (2026-05-29):** Phase 5 terrain walkability; Phase 5b decoration grid collision (`decorationCollision.js`, `ENV_REGISTRY.collision`, `CollisionDebug`); train collision not shipped.
 
-**Done (2026-06-07):** Inland east river (`testTileMap` 30×46, G2 plateau, water at gx 15–16); `water-tiles-5.glb` + walk block; sync foot-snap fix (`EnvironmentModel`, `TileModel`); `worldZToGridGz`; bridge deck map rows gz 20–21 (GLB pending).
+**Done (2026-06-08):** Log bridge crossing — `bridge-log-2.glb`, `BP`/`BW` ford cells, `walkSurfaceYAt`, deck offset tuning.
+
+**Done (2026-06-07):** Inland east river (`testTileMap` 30×46, G2 plateau, water at gx 15–16); `water-tiles-5.glb` + walk block; sync foot-snap fix (`EnvironmentModel`, `TileModel`); `worldZToGridGz`.
 
 **Done (2026-06-06):** Brick tile custom GLB (`brick-tiles.glb`) — `TILE_MODEL_URLS`, `TILE_MODEL_Y_OFFSET`, `TILE_NATIVE_COLOR`; `TileBank` skipped under offset meshes; Blender 2.02 m export contract documented.
 
@@ -659,7 +679,7 @@ Use `cellSurfaceWorld(world, gx, gz)` to get the full `[x, y, z]` for placing a 
 2. ✅ PR 5 — Phase 5 walkability rules (`canMoveTo`) (2026-05-29).
 3. **PR 5b (partial)** — Decoration grid collision + `CollisionDebug` (2026-05-29); polish open (railings, pass-through).
 4. PR 6 — Tile rendering optimization (InstancedMesh, taller cliff GLB).
-5. **PR 7 — River + coastline** — inland river ✅; bridge GLB + wire next; sea tiles south; utility pole, signs.
+5. **PR 7 — River + coastline** — inland river + bridge ✅; sea tiles south; utility pole, signs.
 6. ~~PR 8 — Konbini landmark.~~ ✅ ~2026-06.
 7. **PR 8b — Guest cat polish** (remote walk, appearance save, emotes).
 8. PR 9 — Stair GLB swap (Kenney wedge).
@@ -680,6 +700,13 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-06-08 — Log bridge crossing (end of day):**
+  - `public/images/environments/bridge-log-2.glb` — ACNH Style 3+ plank bridge; `bridge` in `ENV_REGISTRY` / `Decoration.js`.
+  - `lib/testTileMap.js`: `BP` / `BW` ford helpers on gz 20–21 gx 14–17; `BRIDGE_WALK_SURFACE_LIFT` (~0.22).
+  - `lib/testWorld.js`: `riverBridgeDecoration` at gx 15.5 gz 20.5; `BRIDGE_DECK_OFFSET_Y` (~0.8).
+  - `lib/world.js`: `walkSurfaceYAt` (player) split from `surfaceYAt` (decorations); `cell.walkable` / `cell.surfaceYOffset` in `normalizeCell`; `isCellWalkable`.
+  - `component/LocalPlayer.js`: `walkSurfaceYAt` for ground-snap.
+  - **Lesson:** bridge mesh Y via decoration `offset` only — `EnvironmentModel` foot-snap cancels Blender uniform moves; `surfaceYOffset` on `surfaceYAt` moved bridge + cat together (fixed by split).
 - **2026-06-07 — East river, water tile, foot-snap fix (end of day):**
   - `lib/tileModels.js`: `WATER_TILE_URL` → `water-tiles-5.glb`; `TILE_MODEL_Y_OFFSET.water` (~0.6); `TILE_NATIVE_COLOR.water`; `TILE_INFO.water` walkable false.
   - `component/TileModel.js`: `prepareTileModel` in `useMemo` (recolor + foot-snap before paint); `toToonMaterial` sets `vertexColors: true` when GLB uses vertex paint.
@@ -689,7 +716,6 @@ npm run build
   - `lib/testWorld.js`: konbini `cellSurfaceWorld`; `worldZToGridGz` for `railRoadOrigin`; river-bank / park decor retuned.
   - `component/EnvironmentModel.js`: `prepareEnvironmentModel` in `useMemo` — fixes decoration/landmark one-frame sink.
   - `lib/tileGrid.js`: `worldZToGridGz(wz, originZ)` — inverse of `gridToWorld` Z (fractional gz for cell centers).
-  - **Bridge (in progress):** Blender spec ACNH log arch, flat deck Y=1.0, vertex-only planks, 6-sided logs; export `bridge-log.glb`; not in repo wiring yet.
   - **Fixed:** intermittent props/tiles rendering ~1 m low after load (late `useLayoutEffect` bbox snap).
 - **2026-06-06 — Brick sidewalk tile GLB (end of day):**
   - `lib/tileModels.js`: `BRICK_TILE_URL` → `public/images/tiles/brick-tiles.glb`; `TILE_MODEL_URLS`, `tileModelUrl()`, `TILE_MODEL_Y_OFFSET` (brick −1 m render drop), `TILE_NATIVE_COLOR` (keep authored materials).

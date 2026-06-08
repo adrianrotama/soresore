@@ -95,6 +95,13 @@ function RailingProp() {
   return <EnvironmentModel url={ENV_MODELS.railing} />;
 }
 
+function BridgeProp() {
+  // GLB arch was authored pointing +Y; flip so stringers hang below the deck over the river.
+  return (
+    <EnvironmentModel url={ENV_MODELS.bridge}/>
+  );
+}
+
 /**
  * Flat painted overlay sitting just above the tile surface.
  * Used for crosswalk stripes, tactile paving, lane markings — anything that's
@@ -147,6 +154,7 @@ const PROP_COMPONENTS = {
   hedgeCorner: HedgeCornerProp,
   vendingMachine: VendingMachineProp,
   railing: RailingProp,
+  bridge: BridgeProp,
   tactilePaving: TactilePavingProp,
   crosswalkStripe: CrosswalkStripeProp,
 };
@@ -171,6 +179,7 @@ useGLTF.preload(ENV_MODELS.hedgeCorner);
 useGLTF.preload(ENV_MODELS.hedgeStraightLong);
 useGLTF.preload(ENV_MODELS.vendingMachine);
 useGLTF.preload(ENV_MODELS.railing);
+useGLTF.preload(ENV_MODELS.bridge);
 
 /**
  * Render one decoration at a grid cell, lifted to the cell's surface Y.

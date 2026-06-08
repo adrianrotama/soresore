@@ -7,7 +7,7 @@ import {
   canMoveTo,
   getCell,
   stairProgress01,
-  surfaceYAt,
+  walkSurfaceYAt,
   TILE_LEVEL_HEIGHT,
   worldToGrid,
 } from "@/lib/world";
@@ -250,7 +250,7 @@ export default function LocalPlayer({
     }
 
     // Phase 4: Ground-snap (smoothed). Converts world XZ -> grid coords and
-    // lerps Y toward surfaceYAt + foot offset. For stairs, surfaceYAt returns
+    // lerps Y toward walkSurfaceYAt + foot offset. For stairs, walkSurfaceYAt matches
     // the upper landing (good enough for now; slope interpolation is later).
     if (world?.map && world?.origin) {
       const { gx, gz } = worldToGrid(world, pos.x, pos.z);
@@ -263,7 +263,7 @@ export default function LocalPlayer({
           ? // Stair `level` is the BASE; tile rises from level*H (low end)
             // up to (level+1)*H (high end). E.g. STAIR_L1 (level 0) → 0..1 m.
             (cell.level + stairProgress) * TILE_LEVEL_HEIGHT
-          : surfaceYAt(world, gx, gz);
+          : walkSurfaceYAt(world, gx, gz);
       const targetY = surfaceY + PLAYER_FOOT_OFFSET;
       pos.y += (targetY - pos.y) * smoothRate(GROUND_SNAP_RATE, delta);
     }
