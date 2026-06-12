@@ -1,0 +1,141 @@
+# Changelog (doc)
+
+Session history moved from GAME.md. Update at end-of-day handoff only.
+
+- **2026-06-12 — GAME.md trim (doc):**
+  - Slimmed `GAME.md` for AI agents (~1077 → ~305 lines): architecture + handoff only.
+  - Moved session history → `CHANGELOG.md`; Blender tutorial → `docs/blender-avatar.md`; AI prompts → `docs/asset-prompts.md`.
+  - Removed duplicate backlog/PR lists, asset catalog tables, completed-phase diary.
+- **2026-06-12 — Character creator Phase C3 (end of day):**
+  - `component/CharacterCreator.js` + `CharacterCreator.module.scss` — first 2D UI; ACNH-style sunset CRT overlay; Hair/Face/Outfit tabs; 8 hair + 8 outfit color swatches; live chibi preview; drag rotate; pause/resume auto-spin; tab-based head/body camera zoom; `PREVIEW_FACING_YAW` for front-facing preview.
+  - `lib/appearanceStorage.js` — `localStorage` key `soresore.appearance`; first-load gate + **Edit look** reopen; `normalizeAppearance` validation.
+  - `lib/avatarParts.js` — `HAIR_COLORS`, `OUTFIT_COLORS`; `appearance` shape `{ hair, hairColor, face, outfit, outfitColor }`; `OUTFIT_PARTS` collapsed to `tee` style.
+  - `ChibiAvatar.js` — tint from `resolveHairColor` / `resolveOutfitColor`.
+  - `Game.js` — creator open/confirm; `paused` during overlay; Tubbs removed (dev key **`3`** gone).
+  - `LocalPlayer.js` — `paused` freezes movement.
+  - Deleted `Tubbs-the-cat.glb`; `playerModels.js` Quaternius-only.
+  - **Next:** D1 OAuth (creator gated to logged-in); D2 `players.appearance` jsonb.
+- **2026-06-12 — Chibi avatar Phase C2 (end of day):**
+  - `outfit/tshirt.glb` — skinned shirt + armature; `OUTFIT_PARTS` white / blue / yellow tints on one mesh.
+  - `ChibiAvatar.js` — skinned outfit clone + skeleton rebind to body; rigid hair unchanged.
+  - `hair-girl-1.glb` registered; dev keys **`6`** (hair), **`7`** (outfit).
+  - `appearance: { hair, face, outfit }`; Blender tutorial updated for skinned shirt export.
+  - **Next:** C3 CharacterCreator UI + `localStorage`; D1/D2 auth + `players.appearance` jsonb.
+- **2026-06-09 — Chibi avatar Phase C partial (end of day):**
+  - `player-base.glb`, `hair/hair-boy-2.glb`; `ChibiAvatar.js`, `avatarModels.js`, `avatarParts.js`, `faceCanvasTexture.js`.
+  - Dev keys **`4`** (cat/chibi), **`5`** (face). `appearance: { hair, face }` on `LocalPlayer` / `RemotePlayer`.
+  - Face canvas decal + head sync in meters; hair via `attach()` + vertex offset in GLB.
+  - **Outfit decision:** modular shirt GLB (Option C), not material tint — documented AI prompts + Mac Blender tutorial in Chibi avatar section.
+  - **Remaining:** `OUTFIT_PARTS`, bob hair, CharacterCreator UI, Google auth, `players.appearance` jsonb.
+- **2026-06-08 — Log bridge crossing (end of day):**
+  - `public/images/environments/bridge-log-2.glb` — ACNH Style 3+ plank bridge; `bridge` in `ENV_REGISTRY` / `Decoration.js`.
+  - `lib/testTileMap.js`: `BP` / `BW` ford helpers on gz 20–21 gx 14–17; `BRIDGE_WALK_SURFACE_LIFT` (~0.22).
+  - `lib/testWorld.js`: `riverBridgeDecoration` at gx 15.5 gz 20.5; `BRIDGE_DECK_OFFSET_Y` (~0.8).
+  - `lib/world.js`: `walkSurfaceYAt` (player) split from `surfaceYAt` (decorations); `cell.walkable` / `cell.surfaceYOffset` in `normalizeCell`; `isCellWalkable`.
+  - `component/LocalPlayer.js`: `walkSurfaceYAt` for ground-snap.
+  - **Lesson:** bridge mesh Y via decoration `offset` only — `EnvironmentModel` foot-snap cancels Blender uniform moves; `surfaceYOffset` on `surfaceYAt` moved bridge + cat together (fixed by split).
+- **2026-06-07 — East river, water tile, foot-snap fix (end of day):**
+  - `lib/tileModels.js`: `WATER_TILE_URL` → `water-tiles-5.glb`; `TILE_MODEL_Y_OFFSET.water` (~0.6); `TILE_NATIVE_COLOR.water`; `TILE_INFO.water` walkable false.
+  - `component/TileModel.js`: `prepareTileModel` in `useMemo` (recolor + foot-snap before paint); `toToonMaterial` sets `vertexColors: true` when GLB uses vertex paint.
+  - `component/TileMap.js`: water preload; skip `TileBank` for `water` and offset types.
+  - `lib/world.js`: `canMoveStep` blocks `water`; `surfaceYAt` adds `world.origin[1]`.
+  - `lib/testTileMap.js`: map **30×46**; G2 north rows; east river channel gx 14–17 (`P–W–W–P` banks); bridge crossing deck gz 20–21 (`P,P,P,P` over channel).
+  - `lib/testWorld.js`: konbini `cellSurfaceWorld`; `worldZToGridGz` for `railRoadOrigin`; river-bank / park decor retuned.
+  - `component/EnvironmentModel.js`: `prepareEnvironmentModel` in `useMemo` — fixes decoration/landmark one-frame sink.
+  - `lib/tileGrid.js`: `worldZToGridGz(wz, originZ)` — inverse of `gridToWorld` Z (fractional gz for cell centers).
+  - **Fixed:** intermittent props/tiles rendering ~1 m low after load (late `useLayoutEffect` bbox snap).
+- **2026-06-06 — Brick sidewalk tile GLB (end of day):**
+  - `lib/tileModels.js`: `BRICK_TILE_URL` → `public/images/tiles/brick-tiles.glb`; `TILE_MODEL_URLS`, `tileModelUrl()`, `TILE_MODEL_Y_OFFSET` (brick −1 m render drop), `TILE_NATIVE_COLOR` (keep authored materials).
+  - `component/TileModel.js`: `nativeColor` prop — skip palette vertex repaint; convert GLB materials to `MeshToonMaterial`.
+  - `component/TileMap.js`: per-type URL / Y-offset / native-color wiring; preload brick GLB; skip `TileBank` when `tileModelYOffset !== 0` (fixes z-fight under 2 m brick).
+  - Map data unchanged — `"brick"` / `B` in `testTileMap.js`; gameplay `level` + `surfaceYAt` unchanged.
+  - **Blender contract:** 2.082 × 2.082 × 2.02 m, bottom-center origin, apply transforms; no runtime scale needed.
+- **2026-06-05 — Guest cat avatars (Phase A, end of day):**
+  - `component/PlayerAvatar.js` (new): `useGLTF` + `SkeletonUtils.clone`, `useAnimations` Idle/Walk, toon materials, foot snap, palette recolor hook.
+  - `lib/playerModels.js` (new): `quaternius` (default) + `tubbs` registry; tuned scale/rotation/footYOffset.
+  - `lib/guestCatPalette.js` (new): 8 `GUEST_CAT_PRESETS`, `paletteFromSeed`, `quaterniusZoneForUV` (nose `0.53`, eyes `0.59`).
+  - `lib/quaterniusRecolor.js` (new): per-vertex zone colors on cloned geometry.
+  - `component/LocalPlayer.js` / `RemotePlayer.js`: cube meshes replaced with `<PlayerAvatar>`; remotes get palette from remote `playerId`.
+  - `component/Game.js`: dev **`2`** cycles local presets, **`3`** swaps models; overlay shows preset name.
+  - Assets: `public/images/characters/Cat-Quarternius.glb`, `Tubbs-the-cat.glb`.
+  - **Known gaps:** remotes idle-only (no walk blend); Run/jump/emote clips unused; Tubbs dev compare only; appearance not in Supabase yet.
+  - **Character roadmap:** Phase A done; B (auth shell) → C (modular chibi) → D (customization UI) documented in Guest cat section.
+- **2026-05-29 — Walkability + decoration grid collision (end of day):**
+  - `lib/world.js`: `canMoveTo` / `canMoveStep` — cliff rise block, ≤1-level drops on flat, stair axis alignment, diagonal corner checks; `isDecorationBlocked` on cell entry.
+  - `lib/decorationCollision.js` (new): rotated rect footprints (`cellsX`/`cellsZ`, `anchor` center default, `offset`), `buildDecorationBlockedSet`, `listDecorationCollisionFootprints` for debug.
+  - `lib/environmentModels.js`: `ENV_REGISTRY` merges url + `collision` per kind; `collisionForKind()`.
+  - `lib/testWorld.js`: `TEST_WORLD.decorationBlocked` precomputed at load.
+  - `component/LocalPlayer.js`: movement gated by `canMoveTo` with axis slide.
+  - `component/CollisionDebug.js` (new): dev red (logical) / white (per-deco blocked tiles); mounted from `World.js` when `NODE_ENV === "development"`.
+  - **Known gaps:** railings still block whole grid tiles in Z; white overlay tiles sometimes passable (investigate `canMoveTo` same-cell early return); train collision removed; **objects-below-tiles bug more frequent** than pre-2026-05-29 (see Handoff).
+- **2026-05-28 — Player ground-snap + grid helper:**
+  - `component/Game.js`: `LocalPlayer` now receives `world={TEST_WORLD}`.
+  - `component/LocalPlayer.js`: Phase 4 ground-snap (smooth Y toward tile surface each frame). Stair cells use per-position interpolation (`stairProgress01`) so the avatar doesn't float; stair lean uses local pitch (Euler order `YXZ`) to avoid world-axis tumble.
+  - `lib/world.js`: added `worldToGrid(world, wx, wz)` + `gridToCellIndex(gx, gz)`; `getCell` uses `gridToCellIndex`. This reduced the intermittent \"objects below tiles\" bug (mixed coordinate conventions / off-by-half-cell sampling).
+
+- **2026-05-27 — Elevation, stairs, cliff plug, coastline strip:**
+  - `component/TileMap.js`: per-cell Y offset from `cell.level * TILE_LEVEL_HEIGHT` (Phase 2). New inline `TileBank` flat-sided box rendered under every tile to plug rounded-pedestal seams at level transitions; raised tiles use one tall bank instead of stacked pedestals.
+  - `component/StairTile.js` (new): procedural 4-step block, rotation-able, 2.082 × 2.082 m footprint matching pedestal. Bridges one level up. Skirt removed (centralized in `TileBank`).
+  - `lib/world.js`: `normalizeCell` now returns `{ type, level, rotation }` for both string and object forms; `surfaceYAt` returns upper landing on stair cells (`(level + 2) × H`).
+  - `lib/tileModels.js`: `STAIR_TILE_URL` constant (procedural for now, GLB swap later). New `stair` palette (warm tan/clay), `brick` palette tuned for anime-pedestrian beige (`top: "#d9a98a"`, `side: "#b07a5a"`).
+  - `lib/testTileMap.js`: extended layout to coastline (gz 12–26): brick north/south sidewalks, 3-row asphalt road, 6-wide raised brick lookout (gx 7–12, gz 19–21), 2-step descent (`stairUpE/W`) into sand `level: -1` then `level: -2`. `S2 = { type: sand, level: -2 }` helper.
+  - `lib/environmentModels.js` + `component/Decoration.js`: `vendingMachine`, `railing` GLB kinds; new `FlatStripProp` helper backs inline `tactilePaving` (yellow Japan curb strip) and `crosswalkStripe` (white).
+  - `lib/testWorld.js`: `lookoutDecorations` (railings along south sea edge, two centered benches, vending machine east end, trash + lanterns); `roadDressingDecorations` (tactile paving along both sidewalk/road edges; 5 crosswalk stripes at gx 9–10 / gz 15).
+  - **One train confirmed sufficient** — coastline rails are static scenery, no second train.
+- **2026-05-25 — Tile palettes + Kenney decorations:**
+  - `lib/testTileMap.js`: 24×28 map; asphalt center column; path/dirt layout retuned.
+  - `lib/environmentModels.js` + `component/Decoration.js`: bush, cobble, flower, grass clump, hedge kinds; preloads.
+  - `lib/testWorld.js`: mini-park decorations (`MiniParkDecorations`); cobbles/grass near crossings.
+- **2026-05-23 — Station layout + manual rails (commit wrap):**
+  - `lib/testTileMap.js`: 24×18 map; dirt rows under train; path platform (player `gz` 9–10) and vertical path strip (`gx` 8–10).
+  - `lib/testWorld.js`: six `railroadStraight` at `gz: 4.5`, `gx` step 4; two `railCrossing` props; platform props (bench, trashcan, trees, lantern); markers removed.
+  - `component/Decoration.js`: `railroadStraight` (`scale` 2, Y π/2), `railCrossing` (`railCrossingLong` mesh, `scale` 0.02); `offset` on decoration entries.
+  - `lib/world.js`: `getCell` uses `Math.floor(gx/gz)` so fractional decoration coords keep correct surface Y.
+  - `lib/trainRoute.js`: train at `z: -10`.
+- **2026-05-23 — Straight train + decoration props (end of day):**
+  - `lib/trainRoute.js`: `DEFAULT_TRAIN_ROUTE`, straight path sampling, `carRouteOpacity`, `trainExitLeadDistance`; train constants (`TRAIN_SCALE`, `TRAIN_CAR_SPACING`, etc.).
+  - `component/TrainConsist.js`: 3-car consist on straight route; snake enter/exit; per-car opacity fade at boundaries.
+  - `component/StationRailProps.js`: train landmark wrapper only (no rails/hut).
+  - `component/Landmark.js`: `{ kind: "train", start, end, speed?, respawnMs? }`.
+  - `component/Decoration.js`: `bench`, `trashcan`, `tree`, `treeLarge`, `streetLantern` via `EnvironmentModel` + Suspense.
+  - `lib/environmentModels.js`: Tiny Treats GLTF props + Kenney rail assets (rails unused in scene).
+  - `lib/testWorld.js`: train landmark + decoration placements.
+  - Removed: `StationHut.js`, `stationLayout.js`, `trackLayout.js`, `trackPath.js`, `RailTrack.js`, depot landmark, rail loop path.
+  - `Game.js`: spawn at world origin `{ x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 0 }`.
+- **2026-05-22 — Tile system + world architecture (end of day):**
+  - `component/TileModel.js`: load single pedestal GLB, discard `colormap` texture, bake fresh vertex colors per palette (top/side via Y threshold), `MeshToonMaterial` for stepped cel-shading.
+  - `component/TileMap.js`: render 2D map array via TileModel; palette lookup per cell type.
+  - `lib/tileGrid.js`: `TILE_SIZE = 2`; `gridToWorld(gx, gz, origin)` centers tiles in cells.
+  - `lib/tileModels.js`: `TILE_PALETTES` (grass / path / sand / dirt / stone); single `PEDESTAL_TILE_URL`; unified tan side for cozy bank silhouette.
+  - `lib/world.js`: `surfaceYAt(world, gx, gz)`, `cellSurfaceWorld`, `normalizeCell`, `TILE_LEVEL_HEIGHT = 1.0`. Single source of truth for ground Y.
+  - `component/Decoration.js` (grid props) + `component/Landmark.js` (world structures) registries; depot wrapped as `{ kind: "depot" }` landmark.
+  - `component/World.js`: mounts TileMap + Decorations + Landmarks; `positionRef` flows to landmarks for proximity logic.
+  - `lib/stationLayout.js`: `STATION_START.y = TILE_LEVEL_HEIGHT`; `stationHutWorldPosition` / `getPlayerSpawn` / `platformLayout` respect `start[1]`. Depot now sits on tile surface.
+  - `lib/testTileMap.js`: expanded to 12×12 covering depot area; mixed grass/dirt/stone/path for visual reference.
+  - `lib/testWorld.js`: bundle `{ map, origin, decorations, landmarks }`; replaces standalone test map.
+  - `component/Game.js`: mounts only `<World positionRef={myPositionRef} />`; removed direct `<StationRailProps>` call.
+  - Blender contract: tile pedestal 2.082 × 2.082 × 1.0 m, bottom-center pivot, no PBR (vertex colors only). New tile types = palette entries; new tile shapes (sunken water, slope) = new GLBs.
+- **2026-05-21 — Station hut, door, camera (end of day):**
+  - `component/StationHut.js`: loads `station-hut-2.glb`; `Door_Pivot` clone inside snapped hut; proximity door (`DOOR_OPEN_ANGLE` on local Z).
+  - `lib/stationLayout.js`: `stationHutWorldPosition`, `STATION_HUT_*`, spawn in front of hut; `STATION_START` for rails.
+  - Renamed hut vs depot: `TrainStation` → `StationHut`; `ENV_MODELS.stationHut`.
+  - `component/PlayerOrbitCamera.js`: default camera; `` ` `` / F2 dev toggle to `FollowCamera`.
+  - Blender note: `Door_Pivot` must be an **Empty** with panel/handle parented (Collections do not export); apply transforms on meshes, not Empty after parent.
+- **2026-05-21 — Station spawn + platform:**
+  - `lib/stationLayout.js`: `STATION_START`, `getPlayerSpawn()`, `platformLayout()`; constants shared with `StationRailProps`.
+  - `Game.js`: initial position at platform beside train (`getPlayerSpawn()`).
+  - Platform plane under rails (muted stone `#7a7268`).
+- **2026-05-21 — Station environment slice (first GLBs):**
+  - `EnvironmentModel.js`, `lib/environmentModels.js`, `StationRailProps.js`.
+  - Kenney: straight rails along +X, `train-electric-square` a/b/c as head/car/tail consist, `railroad-crossing-long` decoration.
+  - `Game.js`: `<StationRailProps start={[-15, 0, -7]} />` (tuned layout).
+  - Layout API: only `start` prop; rotations/scales as file-level constants.
+- **2026-05-20 — Feel + audio session:**
+  - `LocalPlayer`: idle/move bob, squash/stretch, continuous `movePhase`, `moving01` intensity smoothing; footstep phase hooks.
+  - `FollowCamera`: removed sinus sway (comfort); stable lerp follow only.
+  - `lib/gameAudio.js` + `component/GameAudio.js`: Web Audio unlock, looping `abeto-base.ogg`, one-shot footsteps; step ticks at `2π` phase (tuned from `π` — was 2× too fast vs bob).
+  - `Game.js`: mounts `<GameAudio />`; `SYNC_MS` documented as `5000`.
+  - `AGENTS.md`: cozy camera comfort rules; agents should challenge motion-sickness / non-cozy camera tricks.
+  - Assets added under `public/audio/` (see Audio section). `abeto-footsteps.ogg` is not used for ticks.
+- **Earlier:** Follow camera, camera-relative movement (accel/decel, turn cap), environment (fog/shadows), remote interpolation (`RemotePlayer` + `lib/interpolation.js`). Removed `Player.js`.
+- Multiplayer: Supabase upsert + realtime; `last_seen` heartbeat; client prune; no DELETE.
