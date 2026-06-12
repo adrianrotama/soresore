@@ -1,0 +1,372 @@
+// Sunset / CRT theme tokens (AGENTS.md: #fcb57f orange, #252a37 night)
+$sunset: #fcb57f;
+$sunset-deep: #f59b63;
+$night: #252a37;
+$night-soft: #2f3647;
+$cream: #fff6ee;
+$warm-ambient: #ffd4a0;
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  // Warm evening wash with orange-blue contrast.
+  background: radial-gradient(
+    120% 120% at 50% 0%,
+    rgba(252, 181, 127, 0.35) 0%,
+    rgba(37, 42, 55, 0.72) 60%,
+    rgba(37, 42, 55, 0.88) 100%
+  );
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+  animation: fadeIn 0.35s ease both;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: $night;
+}
+
+// Subtle CRT scanlines + vignette over the whole overlay.
+.crt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.05) 0px,
+    rgba(0, 0, 0, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  box-shadow: inset 0 0 180px rgba(37, 42, 55, 0.55);
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+.panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.15fr);
+  gap: 18px;
+  width: min(880px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 18px;
+  border-radius: 28px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 246, 238, 0.96) 0%,
+    rgba(255, 240, 228, 0.94) 100%
+  );
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 24px 60px rgba(37, 42, 55, 0.45),
+    inset 0 0 0 6px rgba(252, 181, 127, 0.22);
+  animation: popIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+}
+
+// ----- Left: 3D preview stage -----
+.stage {
+  position: relative;
+  border-radius: 22px;
+  overflow: hidden;
+  min-height: 360px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+  background: linear-gradient(
+    180deg,
+    #ffcaa0 0%,
+    #fcb57f 42%,
+    #6f6f9c 100%
+  );
+  box-shadow: inset 0 -40px 60px rgba(37, 42, 55, 0.35);
+}
+
+.stageCanvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.stageGlow {
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  width: 60%;
+  height: 26px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: rgba(37, 42, 55, 0.3);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.stageToolbar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.stageHint {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: rgba(37, 42, 55, 0.85);
+  background: rgba(255, 246, 238, 0.82);
+  box-shadow: 0 2px 8px rgba(37, 42, 55, 0.18);
+}
+
+.spinToggle {
+  pointer-events: auto;
+  padding: 6px 12px;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  color: $night;
+  background: rgba(252, 181, 127, 0.95);
+  box-shadow: 0 3px 10px rgba(37, 42, 55, 0.22);
+  transition: transform 0.12s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+  }
+}
+
+// ----- Right: controls -----
+.controls {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.title {
+  margin: 2px 0 2px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: $night;
+}
+
+.subtitle {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: rgba(37, 42, 55, 0.65);
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.tab {
+  flex: 1;
+  padding: 9px 6px;
+  border: none;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  color: rgba(37, 42, 55, 0.7);
+  background: rgba(37, 42, 55, 0.08);
+  transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+  }
+}
+
+.tabActive {
+  color: $night;
+  background: $sunset;
+  box-shadow: 0 6px 14px rgba(245, 155, 99, 0.45);
+}
+
+.section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.sectionLabel {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(37, 42, 55, 0.5);
+}
+
+.chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.chip {
+  padding: 14px 12px;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  color: $night;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 3px 8px rgba(37, 42, 55, 0.12);
+  transition: transform 0.12s ease, border-color 0.15s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
+.chipActive {
+  border-color: $sunset-deep;
+  background: rgba(252, 181, 127, 0.28);
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.swatch {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(37, 42, 55, 0.22);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    transform: scale(1.08);
+  }
+}
+
+.swatchActive {
+  box-shadow:
+    0 0 0 3px $cream,
+    0 0 0 6px $sunset-deep;
+  transform: scale(1.05);
+}
+
+// ----- Footer -----
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ghostBtn {
+  padding: 11px 16px;
+  border: 2px solid rgba(37, 42, 55, 0.18);
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  color: rgba(37, 42, 55, 0.75);
+  background: transparent;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: rgba(37, 42, 55, 0.06);
+  }
+}
+
+.shuffleBtn {
+  @extend .ghostBtn;
+  margin-right: auto;
+}
+
+.primaryBtn {
+  margin-left: auto;
+  padding: 12px 26px;
+  border: none;
+  border-radius: 18px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  color: $night;
+  background: linear-gradient(180deg, $sunset 0%, $sunset-deep 100%);
+  box-shadow: 0 8px 18px rgba(245, 155, 99, 0.5);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 22px rgba(245, 155, 99, 0.6);
+  }
+}
+
+// ----- Reopen button (in-game, when closed) -----
+.reopenBtn {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  color: $night;
+  background: rgba(252, 181, 127, 0.95);
+  box-shadow: 0 8px 18px rgba(37, 42, 55, 0.35);
+  transition: transform 0.12s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

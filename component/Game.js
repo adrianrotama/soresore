@@ -10,13 +10,10 @@ import PlayerOrbitCamera from "@/component/PlayerOrbitCamera";
 import Environment from "@/component/Environment";
 import World from "@/component/World";
 import GameAudio from "@/component/GameAudio";
+import CharacterCreator from "@/component/CharacterCreator";
 import { TEST_WORLD } from "@/lib/testWorld";
 import { TILE_LEVEL_HEIGHT } from "@/lib/world";
-import {
-  DEFAULT_PLAYER_CAT,
-  PLAYER_CAT_KEYS,
-  PLAYER_CAT_MODELS,
-} from "@/lib/playerModels";
+import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
 import {
   GUEST_CAT_PRESETS,
   paletteFromSeed,
@@ -28,6 +25,12 @@ import {
   HAIR_KEYS,
   OUTFIT_KEYS,
 } from "@/lib/avatarParts";
+import {
+  hasCreatedCharacter,
+  loadAppearance,
+  saveAppearance,
+} from "@/lib/appearanceStorage";
+import creatorStyles from "@/component/CharacterCreator.module.scss";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -72,18 +75,43 @@ export default function Game() {
   const myPositionRef = useRef(spawn);
   /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);
-  /** Dev only: `3` cycles guest cat prototype (Quaternius ↔ Tubbs). */
-  const [catModel, setCatModel] = useState(DEFAULT_PLAYER_CAT);
   /** Dev only: `4` toggles guest cat vs chibi avatar. */
   const [avatarKind, setAvatarKind] = useState("cat");
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
+  /** Character creator overlay — gate on first load, reopenable later. */
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [hasCreated, setHasCreated] = useState(false);
   /** Dev only: `2` cycles GUEST_CAT_PRESETS for local cat color tuning. */
   const [devPresetIndex, setDevPresetIndex] = useState(() =>
     presetIndexFromSeed(playerId)
   );
+  const catModel = DEFAULT_PLAYER_CAT;
   const localGuestPalette = IS_DEV
     ? GUEST_CAT_PRESETS[devPresetIndex]
     : guestPalette;
+
+  // Hydrate saved look on mount; first-time visitors get the creator as a gate.
+  // NOTE (Phase D1): gate this behind an OAuth login — guests stay cats; only
+  // logged-in users see the creator / render as a chibi.
+  useEffect(() => {
+    const saved = loadAppearance();
+    setAppearance(saved);
+    if (hasCreatedCharacter()) {
+      setHasCreated(true);
+      setAvatarKind("chibi");
+    } else {
+      setAvatarKind("chibi");
+      setCreatorOpen(true);
+    }
+  }, []);
+
+  function handleConfirmAppearance(next) {
+    setAppearance(next);
+    setAvatarKind("chibi");
+    saveAppearance(next);
+    setHasCreated(true);
+    setCreatorOpen(false);
+  }
   // Network-authoritative positions from Supabase (not rendered directly).
   const [players, setPlayers] = useState({});
 
@@ -102,14 +130,6 @@ export default function Game() {
         setDevPresetIndex(
           (index) => (index + 1) % GUEST_CAT_PRESETS.length
         );
-        return;
-      }
-
-      if (e.key === "3") {
-        setCatModel((current) => {
-          const index = PLAYER_CAT_KEYS.indexOf(current);
-          return PLAYER_CAT_KEYS[(index + 1) % PLAYER_CAT_KEYS.length];
-        });
         return;
       }
 
@@ -257,9 +277,6 @@ export default function Game() {
         >
           {useLegacyFollow && <div>Legacy fixed follow (` or F2 for orbit)</div>}
           <div>
-            Cat: {PLAYER_CAT_MODELS[catModel]?.label ?? catModel} (3 swap)
-          </div>
-          <div>
             Avatar: {avatarKind === "chibi" ? "Chibi" : "Guest cat"} (4 toggle)
           </div>
           {avatarKind === "chibi" ? (
@@ -293,6 +310,7 @@ export default function Game() {
           appearance={appearance}
           catModel={catModel}
           guestPalette={catModel === "quaternius" ? localGuestPalette : null}
+          paused={creatorOpen}
         />
 
         {remotePlayers.map(([id, networkPosition]) => (
@@ -306,6 +324,24 @@ export default function Game() {
           />
         ))}
       </Canvas>
+
+      {hasCreated && !creatorOpen && (
+        <button
+          type="button"
+          className={creatorStyles.reopenBtn}
+          onClick={() => setCreatorOpen(true)}
+        >
+          Edit look
+        </button>
+      )}
+
+      <CharacterCreator
+        open={creatorOpen}
+        appearance={appearance}
+        canClose={hasCreated}
+        onConfirm={handleConfirmAppearance}
+        onClose={() => setCreatorOpen(false)}
+      />
     </>
   );
 }

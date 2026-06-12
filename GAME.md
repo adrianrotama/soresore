@@ -52,10 +52,13 @@ component/TrainConsist.js   → 3-car train: straight route, snake enter/exit, o
 component/StationRailProps.js → train landmark wrapper (Suspense + TrainConsist)
 component/LocalPlayer.js    → local input, movement, bob/squash, footstep ticks; mounts <PlayerAvatar> or <ChibiAvatar>
 component/RemotePlayer.js   → remote avatar; network vs visual position
-component/PlayerAvatar.js   → guest cat GLB (Quaternius / Tubbs), toon materials, Idle/Walk blend
+component/PlayerAvatar.js   → guest cat GLB (Quaternius), toon materials, Idle/Walk blend
 component/ChibiAvatar.js    → logged-in chibi: body GLB + rigid hair + skinned outfit + face decal sync
+component/CharacterCreator.js → ACNH-style avatar customizer overlay (3D preview, tabs, localStorage)
+component/CharacterCreator.module.scss → sunset / CRT translucent panel styles for creator UI
 lib/avatarModels.js         → chibi base registry (`player-base.glb`, clips, head bone name)
-lib/avatarParts.js          → `HAIR_PARTS`, `FACE_PARTS`, `OUTFIT_PARTS`, `DEFAULT_APPEARANCE`
+lib/avatarParts.js          → `HAIR_PARTS`, `HAIR_COLORS`, `FACE_PARTS`, `OUTFIT_PARTS`, `OUTFIT_COLORS`, `DEFAULT_APPEARANCE`
+lib/appearanceStorage.js    → `loadAppearance` / `saveAppearance` / `hasCreatedCharacter` (`localStorage`)
 lib/faceCanvasTexture.js    → procedural Normal/Smile face (canvas → WebGL texture)
 lib/playerModels.js         → per-model url, scale, rotation, foot offset, toon flags
 lib/guestCatPalette.js      → GUEST_CAT_PRESETS, paletteFromSeed, UV zone helpers
@@ -186,8 +189,7 @@ Prune only clears React state, not DB rows.
 
 | Key | File | Notes |
 |-----|------|--------|
-| `quaternius` | `Cat-Quarternius.glb` | **Default.** Skinned mesh, 8 animation clips. Tuned `scale`, `rotation`, `footYOffset` in registry. |
-| `tubbs` | `Tubbs-the-cat.glb` | Static mesh, no rig. Kept for cute comparison — **dev toggle only** for now. |
+| `quaternius` | `Cat-Quarternius.glb` | **Default (only).** Skinned mesh, 8 animation clips. Tuned `scale`, `rotation`, `footYOffset` in registry. |
 
 ### Loading (`component/PlayerAvatar.js`)
 
@@ -225,10 +227,9 @@ With `paletteRecolor: true`, material is `MeshToonMaterial` + `vertexColors` (no
 | Key | Action |
 |-----|--------|
 | **`2`** | Cycle **local** `GUEST_CAT_PRESETS` (tune colors in `guestCatPalette.js`) |
-| **`3`** | Swap cat model Quaternius ↔ Tubbs |
 | `` ` `` / **F2** | Legacy fixed follow camera vs orbit (unchanged) |
 
-Overlay shows cat label, preset name + index (`Preset: Ginger (1/8 · 2 cycle)`).
+Overlay shows avatar kind, chibi `appearance` fields (keys `5`–`7`), or guest preset name + index (`Preset: Ginger (1/8 · 2 cycle)`).
 
 ### Character roadmap
 
@@ -236,16 +237,16 @@ Overlay shows cat label, preset name + index (`Preset: Ginger (1/8 · 2 cycle)`)
 |-------|--------|--------|
 | **A** | Guest Quaternius cat + bob + Idle/Walk + random palette | ✅ |
 | **B** | Auth shell — guest = cat, logged-in = chibi | Not started |
-| **C** | Modular chibi avatar (body / hair / face / outfit) | **C2 done** — creator UI (C3) next; see Chibi avatar section |
-| **D** | Customization UI + Supabase `appearance` JSON | Not started |
+| **C** | Modular chibi avatar (body / hair / face / outfit) + creator UI | **C3 done** — see Chibi avatar section |
+| **D** | Auth + Supabase `appearance` JSON | **Next** (D1 OAuth, D2 persist) |
 
-**Defer:** emotes (eating, wave, sit), Run at high speed, Tubbs in production; face UV-paint on round head (decal MVP is good enough for now).
+**Defer:** emotes (eating, wave, sit), Run at high speed; face UV-paint on round head (decal MVP is good enough for now).
 
 ---
 
-## Chibi avatar (logged-in player — Phase C2 done, 2026-06-12)
+## Chibi avatar (logged-in player — Phase C3 done, 2026-06-12)
 
-**Goal:** Logged-in players render as a **modular chibi** (ACNH / Play Together style). Guests keep the Quaternius cat until auth ships.
+**Goal:** Logged-in players render as a **modular chibi** (ACNH / Play Together style). Guests keep the Quaternius cat until auth ships. **Character creator UI** is wired; production gate (logged-in only) is Phase **D1**.
 
 ### Architecture
 
@@ -260,13 +261,45 @@ Player (LocalPlayer / RemotePlayer)
 | Part | File / registry | Attach |
 |------|-----------------|--------|
 | Body | `public/images/characters/player-base.glb` | `lib/avatarModels.js` — `CHIBI_BASE_MODEL` |
-| Hair | `hair-boy-2.glb` (`Hair_Boy`), `hair-girl-1.glb` (`Hair_Girl_1`) | `HAIR_PARTS` — rigid `attach()` to `mixamorigHead` |
+| Hair | `hair-boy-2.glb` (`Hair_Boy_2`), `hair-girl-1.glb` (`Hair_Girl_1`) | `HAIR_PARTS` style + `HAIR_COLORS` tint (8 cozy colors) |
 | Face | `lib/faceCanvasTexture.js` (Normal / Smile) | `FACE_PARTS` — offset in **meters**, synced each frame |
-| Shirt | `outfit/tshirt.glb` (`tshirt` mesh, skinned) | `OUTFIT_PARTS` — white / blue / yellow via toon `color` tint |
+| Shirt | `outfit/tshirt.glb` (`tshirt` mesh, skinned) | `OUTFIT_PARTS` style (`tee`) + `OUTFIT_COLORS` tint (8 colors) |
 
 **Base stats:** ~1.5 m tall, Mixamo rig (`mixamorigHead`, …), clips `idle` + `run`, feet at Y ≈ 0. Body Y rotation `Math.PI` in `avatarModels.js` so forward matches movement.
 
-**Outfit pipeline:** Shirt is **skinned** in Blender (weight transfer to body armature), exported **shirt mesh + armature only** (no body mesh). `ChibiAvatar.js` clones the skinned shirt and rebinds to the body's skeleton so sleeves follow arm animation. Multiple shirt colors share one GLB — tint via `OUTFIT_PARTS.color` (Option C modular mesh, not body material swap).
+**Outfit pipeline:** Shirt is **skinned** in Blender (weight transfer to body armature), exported **shirt mesh + armature only** (no body mesh). `ChibiAvatar.js` clones the skinned shirt and rebinds to the body's skeleton so sleeves follow arm animation. **Style** and **color** are separate axes: one `tee` GLB, tint via `resolveOutfitColor(appearance.outfitColor)` (same pattern for hair).
+
+### `appearance` shape
+
+```js
+{
+  hair: "boy",           // HAIR_PARTS key (boy / girl styles)
+  hairColor: "darkBrown", // HAIR_COLORS key (8 cozy ACNH-common tints)
+  face: "normal",        // FACE_PARTS key
+  outfit: "tee",         // OUTFIT_PARTS key (one shirt mesh today)
+  outfitColor: "yellow", // OUTFIT_COLORS key (8 tints)
+}
+```
+
+Passed from `Game.js` → `LocalPlayer` / `RemotePlayer` → `ChibiAvatar`. Persisted in **`localStorage`** (`soresore.appearance`) via `lib/appearanceStorage.js` on creator confirm.
+
+### Character creator (`component/CharacterCreator.js`)
+
+First **2D UI** in the project — ACNH-inspired, sunset CRT / translucent panel (`CharacterCreator.module.scss`: `#fcb57f` / `#252a37`).
+
+| Feature | Behavior |
+|---------|----------|
+| **Gate** | Opens on first load when no saved `appearance`; **Enter world** confirms and saves |
+| **Reopen** | Floating **Edit look** pill (bottom-right) after first confirm |
+| **Tabs** | Hair / Face / Outfit — style chips; Hair + Outfit also have round **color swatches** |
+| **3D preview** | Nested `<Canvas>` + `<ChibiAvatar appearance={draft} />`; warm sunset lights |
+| **Rotate** | Drag stage left/right; gentle auto-spin (toggle **Pause spin** / **Resume spin**) |
+| **Camera** | Hair/Face tab → zoom to head; Outfit tab → full-body (smooth lerp in `PreviewCamera`) |
+| **Facing** | `PREVIEW_FACING_YAW = Math.PI` on preview rig — offsets `CHIBI_BASE_MODEL.rotation.y` so model faces camera at load |
+| **World freeze** | `LocalPlayer` receives `paused={creatorOpen}` — no movement while overlay is open |
+| **Chibi on confirm** | `handleConfirmAppearance` sets `avatarKind = "chibi"` and saves |
+
+**Phase D1 note:** Creator should be shown **only for logged-in users** (OAuth). Guests stay Quaternius cat and skip the creator. `Game.js` has a comment at the hydrate `useEffect` — wire `creatorOpen` behind auth when D1 lands.
 
 ### Dev toggles (`Game.js`, development only)
 
@@ -275,9 +308,9 @@ Player (LocalPlayer / RemotePlayer)
 | **`4`** | Toggle guest cat ↔ chibi |
 | **`5`** | Cycle face Normal ↔ Smile |
 | **`6`** | Cycle hair boy ↔ girl |
-| **`7`** | Cycle outfit white ↔ blue ↔ yellow |
+| **`7`** | Cycle outfit style (`tee` only today) |
 
-`appearance` shape: `{ hair: "boy", face: "normal", outfit: "yellow" }`. Passed from `Game.js` → `LocalPlayer` / `RemotePlayer` → `ChibiAvatar`.
+Dev HUD shows chibi `appearance` fields when `avatarKind === "chibi"`.
 
 ### Known limitations (acceptable for MVP)
 
@@ -285,6 +318,7 @@ Player (LocalPlayer / RemotePlayer)
 - Hair export must be **mesh only** (no body/armature in the hair GLB).
 - Shirt export must be **skinned** (shirt + armature); rigid spine-parent shirts do not follow arms.
 - Outfit colors are **toon tints** on one shirt mesh — separate fabric materials need separate GLBs.
+- Creator is **not OAuth-gated yet** — all sessions see it until D1; remotes still share local `appearance` (not networked).
 
 ### Remaining tasks (from chibi avatar plan)
 
@@ -294,12 +328,12 @@ Player (LocalPlayer / RemotePlayer)
 | **C2a** | Hair attach (boy + girl) + dev key `6` | ✅ Done |
 | **C2b** | Face decal (canvas Normal / Smile) + dev key `5` | ✅ Done (MVP) |
 | **C2c** | Modular outfit — skinned `tshirt.glb`, `OUTFIT_PARTS`, dev key `7` | ✅ Done |
-| **C3** | `CharacterCreator.js` overlay (CRT / translucent), `localStorage` for `appearance` | **Next** |
-| **D1** | Google OAuth — `LoginScreen`, `app/auth/callback/route.js`, guest = cat / logged-in = chibi | Pending |
+| **C3** | `CharacterCreator.js` overlay, hair/outfit color axes, `localStorage`, preview rotate/zoom | ✅ Done |
+| **D1** | Google OAuth — `LoginScreen`, `app/auth/callback/route.js`, guest = cat / logged-in = chibi + creator gate | **Next** |
 | **D2** | Supabase `players.appearance` jsonb + immediate upsert on change (not `SYNC_MS`); remote chibi appearance | Pending |
 | **Polish** | Remote chibi run blend; delete old `hair-boy.glb`; optional PNG/SVG faces instead of canvas | Backlog |
 
-**Recommended PR order:** C3 creator UI → D1 auth → D2 persist.
+**Recommended PR order:** D1 auth → D2 persist.
 
 ---
 
@@ -393,7 +427,7 @@ same as white shirt but solid cozy blue #4a7ab8, low poly chibi t-shirt only mes
 4. Shrinkwrap to body mesh (same as hair, small offset `0.005–0.02`).
 5. **Weight transfer:** select shirt → **Shift**-select armature → **Ctrl+P** → **Armature Deform** → **Transfer Weights** (or Automatic Weights). Pose-mode test: arms should move the sleeves.
 6. **Export:** select **shirt mesh + armature** (not body mesh). **File → Export → glTF 2.0** → `public/images/characters/outfit/tshirt.glb`. Enable **Selected Objects**, **Mesh**, **Skinning**, **Armature**.
-7. Register in `lib/avatarParts.js` → `OUTFIT_PARTS`: `url`, `meshName` (object name in GLB, e.g. `tshirt`), `color` for tint. Extra colors can share the same GLB.
+7. Register in `lib/avatarParts.js` → `OUTFIT_PARTS` (style: `url`, `meshName`) and add tints in `OUTFIT_COLORS`. One GLB can serve all shirt colors.
 
 #### Export checklist
 
@@ -757,19 +791,27 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 
 ## Handoff — continue here (next session)
 
-**State (2026-06-12):** **Chibi avatar Phase C2 done** — body + hair (boy/girl) + face + skinned outfit wired (`ChibiAvatar.js`, dev keys `4`–`7`). Next: **C3 character creator UI** (`localStorage`), then **D1/D2** Google auth + Supabase `appearance`. Prior: east river log bridge (2026-06-08).
+**State (2026-06-12):** **Chibi avatar Phase C3 done** — modular chibi + **CharacterCreator** UI (`localStorage`, hair/outfit color axes, 3D preview with drag-rotate / pause-spin / tab zoom). Tubbs guest cat removed (Quaternius only). Next: **D1** Google OAuth (guest = cat, logged-in = chibi + creator gate), then **D2** Supabase `players.appearance`. Prior: east river log bridge (2026-06-08).
+
+**Done (2026-06-12) — character creator (Phase C3):**
+- `component/CharacterCreator.js` + `CharacterCreator.module.scss` — ACNH-style sunset CRT overlay; Hair / Face / Outfit tabs; style chips + color swatches (8 hair + 8 outfit); nested preview `<Canvas>`; drag rotate + pause/resume spin; head/body camera zoom per tab; `PREVIEW_FACING_YAW` for front-facing preview.
+- `lib/appearanceStorage.js` — `soresore.appearance` in `localStorage`; first-load gate + **Edit look** reopen; confirm forces chibi.
+- `lib/avatarParts.js` — `HAIR_COLORS`, `OUTFIT_COLORS`; style/color split (`appearance`: `hair`, `hairColor`, `face`, `outfit`, `outfitColor`).
+- `component/Game.js` — creator wiring, `paused` while open; removed Tubbs / dev key **`3`**.
+- `component/LocalPlayer.js` — `paused` prop freezes movement during creator.
+- Deleted `public/images/characters/Tubbs-the-cat.glb`.
 
 **Done (2026-06-12) — chibi avatar (Phase C2):**
 - `public/images/characters/player-base.glb` — Mixamo chibi ~1.5 m, `idle` + `run`, skinned body mesh.
 - `public/images/characters/hair/hair-boy-2.glb`, `hair-girl-1.glb` — rigid hair meshes.
-- `public/images/characters/outfit/tshirt.glb` — skinned shirt (`tshirt`), shirt + armature only; white / blue / yellow via `OUTFIT_PARTS.color`.
-- `component/ChibiAvatar.js` — rigid hair attach, skinned outfit rebind to body skeleton, face sync.
-- `lib/avatarModels.js`, `lib/avatarParts.js`, `lib/faceCanvasTexture.js`.
-- `Game.js` dev **`4`** cat/chibi, **`5`** face, **`6`** hair, **`7`** outfit; `appearance` on local + remote players.
+- `public/images/characters/outfit/tshirt.glb` — skinned shirt (`tshirt`), shirt + armature only.
+- `component/ChibiAvatar.js` — rigid hair attach, skinned outfit rebind to body skeleton, face sync; tints from `hairColor` / `outfitColor`.
+- `lib/avatarModels.js`, `lib/faceCanvasTexture.js`.
+- `Game.js` dev **`4`** cat/chibi, **`5`** face, **`6`** hair, **`7`** outfit style.
 
 **Chibi — next (small PRs):**
-1. **C3 — Character creator UI** — CRT overlay, `localStorage` for `appearance`.
-2. **D1 / D2 — Auth + Supabase `appearance`** — Google OAuth; guests = cat.
+1. **D1 — Google OAuth** — `LoginScreen`, `app/auth/callback/route.js`; guests = cat; logged-in = chibi; creator only when logged in.
+2. **D2 — Supabase `appearance`** — `players.appearance` jsonb + immediate upsert on change; remote chibi looks.
 
 **State (2026-06-08):** **East river log bridge shipped** — `bridge-log-2.glb`, ford tiles `BP`/`BW`, `walkSurfaceYAt` for deck-height player snap. Prior: inland river + water v5 + sync foot-snap (2026-06-07).
 
@@ -791,7 +833,7 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 
 1. **Remote walk animation** — pass speed or `moving01` for remotes (derive from lerped position delta or add to Supabase row later).
 2. **Persist appearance** — when auth lands, store preset name on `players` or profile; guests keep `paletteFromSeed` until then.
-3. **Prod cleanup** — Tubbs dev-only is already gated by model toggle in dev; confirm Quaternius-only default for shipping builds.
+3. ~~**Prod cleanup** — Quaternius-only guest cat (Tubbs removed 2026-06-12).~~ ✅
 4. **Optional:** Run clip above speed threshold; `Idle_Eating` as sit/konbini emote.
 
 **Carry over (world/collision — still open):**
@@ -835,7 +877,7 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 - Surface-based footsteps (zones).
 - Second train / rail loop.
 - Station hut re-wire.
-- Remote extrapolation; chat/diary social UI; chibi C3/D (creator UI + auth + persist — see Chibi avatar section); face UV-paint polish; station SFX.
+- Remote extrapolation; chat/diary social UI; chibi D1/D2 (OAuth gate + Supabase `appearance` — see Chibi avatar section); face UV-paint polish; station SFX.
 
 **Naming:**
 - Tile-level: `tileGrid.js`, `tileModels.js`, `TileMap`, `TileModel`.
@@ -883,7 +925,7 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 7. **PR 8b — Guest cat polish** (remote walk, appearance save, emotes).
 8. PR 9 — Stair GLB swap (Kenney wedge).
 9. PR 10 — Tile dressing overlays (lane stripes, brick joints).
-10. Surface footsteps; station SFX; social UI; chibi creator + auth (Phases C3–D); remote extrapolation; shadow polish.
+10. Surface footsteps; station SFX; social UI; chibi auth + persist (Phases D1–D2); remote extrapolation; shadow polish.
 
 
 ---
@@ -899,6 +941,15 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-06-12 — Character creator Phase C3 (end of day):**
+  - `component/CharacterCreator.js` + `CharacterCreator.module.scss` — first 2D UI; ACNH-style sunset CRT overlay; Hair/Face/Outfit tabs; 8 hair + 8 outfit color swatches; live chibi preview; drag rotate; pause/resume auto-spin; tab-based head/body camera zoom; `PREVIEW_FACING_YAW` for front-facing preview.
+  - `lib/appearanceStorage.js` — `localStorage` key `soresore.appearance`; first-load gate + **Edit look** reopen; `normalizeAppearance` validation.
+  - `lib/avatarParts.js` — `HAIR_COLORS`, `OUTFIT_COLORS`; `appearance` shape `{ hair, hairColor, face, outfit, outfitColor }`; `OUTFIT_PARTS` collapsed to `tee` style.
+  - `ChibiAvatar.js` — tint from `resolveHairColor` / `resolveOutfitColor`.
+  - `Game.js` — creator open/confirm; `paused` during overlay; Tubbs removed (dev key **`3`** gone).
+  - `LocalPlayer.js` — `paused` freezes movement.
+  - Deleted `Tubbs-the-cat.glb`; `playerModels.js` Quaternius-only.
+  - **Next:** D1 OAuth (creator gated to logged-in); D2 `players.appearance` jsonb.
 - **2026-06-12 — Chibi avatar Phase C2 (end of day):**
   - `outfit/tshirt.glb` — skinned shirt + armature; `OUTFIT_PARTS` white / blue / yellow tints on one mesh.
   - `ChibiAvatar.js` — skinned outfit clone + skeleton rebind to body; rigid hair unchanged.

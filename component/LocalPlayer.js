@@ -139,6 +139,7 @@ export default function LocalPlayer({
   appearance = DEFAULT_APPEARANCE,
   catModel = DEFAULT_PLAYER_CAT,
   guestPalette,
+  paused = false,
 }) {
   const { camera } = useThree();
   const meshRef = useRef();
@@ -195,7 +196,8 @@ export default function LocalPlayer({
     let stairRot = 0;
     let stairProgress = 0;
 
-    const cameraInput = getCameraSpaceInput(keys.current);
+    if (paused) keys.current = {};
+    const cameraInput = paused ? null : getCameraSpaceInput(keys.current);
     const { forward, right } = getCameraBasis(
       camera,
       pos.x,
