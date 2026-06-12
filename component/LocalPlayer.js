@@ -13,6 +13,8 @@ import {
 } from "@/lib/world";
 import { TILE_SIZE } from "@/lib/tileGrid";
 import PlayerAvatar from "@/component/PlayerAvatar";
+import ChibiAvatar from "@/component/ChibiAvatar";
+import { DEFAULT_APPEARANCE } from "@/lib/avatarParts";
 import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
 
 const MAX_SPEED = 10;
@@ -133,6 +135,8 @@ function getFacingDirection(vel, speed, worldInput) {
 export default function LocalPlayer({
   positionRef,
   world,
+  avatarKind = "cat",
+  appearance = DEFAULT_APPEARANCE,
   catModel = DEFAULT_PLAYER_CAT,
   guestPalette,
 }) {
@@ -339,11 +343,15 @@ export default function LocalPlayer({
 
   return (
     <group ref={meshRef} position={[x, y, z]}>
-      <PlayerAvatar
-        modelKey={catModel}
-        moving01Ref={moving01Ref}
-        guestPalette={guestPalette}
-      />
+      {avatarKind === "chibi" ? (
+        <ChibiAvatar moving01Ref={moving01Ref} appearance={appearance} />
+      ) : (
+        <PlayerAvatar
+          modelKey={catModel}
+          moving01Ref={moving01Ref}
+          guestPalette={guestPalette}
+        />
+      )}
     </group>
   );
 }

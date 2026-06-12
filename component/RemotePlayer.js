@@ -4,6 +4,8 @@ import { useRef, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import { lerpPosition } from "@/lib/interpolation";
 import PlayerAvatar from "@/component/PlayerAvatar";
+import ChibiAvatar from "@/component/ChibiAvatar";
+import { DEFAULT_APPEARANCE } from "@/lib/avatarParts";
 import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
 import { paletteFromSeed } from "@/lib/guestCatPalette";
 
@@ -14,6 +16,8 @@ import { paletteFromSeed } from "@/lib/guestCatPalette";
 export default function RemotePlayer({
   playerId,
   networkPosition,
+  avatarKind = "cat",
+  appearance = DEFAULT_APPEARANCE,
   catModel = DEFAULT_PLAYER_CAT,
 }) {
   const guestPalette =
@@ -42,10 +46,14 @@ export default function RemotePlayer({
 
   return (
     <group ref={meshRef} position={[x, y, z]}>
-      <PlayerAvatar
-        modelKey={catModel}
-        guestPalette={guestPalette}
-      />
+      {avatarKind === "chibi" ? (
+        <ChibiAvatar appearance={appearance} />
+      ) : (
+        <PlayerAvatar
+          modelKey={catModel}
+          guestPalette={guestPalette}
+        />
+      )}
     </group>
   );
 }

@@ -50,9 +50,13 @@ component/Decoration.js     → grid-anchored prop registry ({ kind, gx, gz, rot
 component/Landmark.js       → world-anchored structure registry ({ kind, … })
 component/TrainConsist.js   → 3-car train: straight route, snake enter/exit, opacity fade
 component/StationRailProps.js → train landmark wrapper (Suspense + TrainConsist)
-component/LocalPlayer.js    → local input, movement, bob/squash, footstep ticks; mounts <PlayerAvatar>
+component/LocalPlayer.js    → local input, movement, bob/squash, footstep ticks; mounts <PlayerAvatar> or <ChibiAvatar>
 component/RemotePlayer.js   → remote avatar; network vs visual position
 component/PlayerAvatar.js   → guest cat GLB (Quaternius / Tubbs), toon materials, Idle/Walk blend
+component/ChibiAvatar.js    → logged-in chibi: body GLB + rigid hair + skinned outfit + face decal sync
+lib/avatarModels.js         → chibi base registry (`player-base.glb`, clips, head bone name)
+lib/avatarParts.js          → `HAIR_PARTS`, `FACE_PARTS`, `OUTFIT_PARTS`, `DEFAULT_APPEARANCE`
+lib/faceCanvasTexture.js    → procedural Normal/Smile face (canvas → WebGL texture)
 lib/playerModels.js         → per-model url, scale, rotation, foot offset, toon flags
 lib/guestCatPalette.js      → GUEST_CAT_PRESETS, paletteFromSeed, UV zone helpers
 lib/quaterniusRecolor.js    → paint Quaternius mesh vertex colors by UV zone (body / accent / eye / nose)
@@ -74,7 +78,7 @@ component/CollisionDebug.js → dev-only red/white collision wireframes (NODE_EN
 lib/interpolation.js        → smoothRate, lerpPosition (remotes; reusable)
 lib/gameAudio.js            → ambience loop, one-shot footsteps, step phase ticks
 public/audio/               → see Audio section
-public/images/characters/   → guest cat GLBs (`Cat-Quarternius.glb`, `Tubbs-the-cat.glb`)
+public/images/characters/   → guest cats + chibi (`player-base.glb`, `hair/`, `face/`, `outfit/`)
 public/images/environments/ → Kenney train/rail + Tiny Treats props (see Environment props)
 public/images/tiles/        → tile pedestal GLB + Kenney source packs (see Tile system)
 ```
@@ -176,7 +180,7 @@ Prune only clears React state, not DB rows.
 
 ## Guest cat avatars (Phase A — 2026-06-05)
 
-**Goal:** Guest players = low-poly **animated cat** (Quaternius). Logged-in chibi customization is a later phase (see Character roadmap).
+**Goal:** Guest players = low-poly **animated cat** (Quaternius). Logged-in **chibi** is in progress (dev key `4`; see **Chibi avatar** section). Production auth gate not wired yet.
 
 ### Models (`lib/playerModels.js`)
 
@@ -226,16 +230,197 @@ With `paletteRecolor: true`, material is `MeshToonMaterial` + `vertexColors` (no
 
 Overlay shows cat label, preset name + index (`Preset: Ginger (1/8 · 2 cycle)`).
 
-### Character roadmap (not started except Phase A)
+### Character roadmap
 
-| Phase | Scope |
-|-------|--------|
-| **A** ✅ | Guest Quaternius cat + bob + Idle/Walk + random palette |
-| **B** | Auth shell — guest = cat, logged-in = placeholder avatar |
-| **C** | Modular chibi avatar (hair / clothes) |
-| **D** | Customization UI + Supabase `appearance` JSON (persist preset or palette id) |
+| Phase | Scope | Status |
+|-------|--------|--------|
+| **A** | Guest Quaternius cat + bob + Idle/Walk + random palette | ✅ |
+| **B** | Auth shell — guest = cat, logged-in = chibi | Not started |
+| **C** | Modular chibi avatar (body / hair / face / outfit) | **C2 done** — creator UI (C3) next; see Chibi avatar section |
+| **D** | Customization UI + Supabase `appearance` JSON | Not started |
 
-**Defer:** emotes (eating, wave, sit), Run at high speed, Tubbs in production.
+**Defer:** emotes (eating, wave, sit), Run at high speed, Tubbs in production; face UV-paint on round head (decal MVP is good enough for now).
+
+---
+
+## Chibi avatar (logged-in player — Phase C2 done, 2026-06-12)
+
+**Goal:** Logged-in players render as a **modular chibi** (ACNH / Play Together style). Guests keep the Quaternius cat until auth ships.
+
+### Architecture
+
+```
+Player (LocalPlayer / RemotePlayer)
+ ├─ Body   → player-base.glb (skinned, idle + run clips)
+ ├─ Hair   → rigid GLB, follows head bone (attach preserves mesh vertex offset)
+ ├─ Outfit → skinned shirt GLB, rebinds to body skeleton in ChibiAvatar
+ └─ Face   → canvas decal plane, synced to head each frame (meters offset)
+```
+
+| Part | File / registry | Attach |
+|------|-----------------|--------|
+| Body | `public/images/characters/player-base.glb` | `lib/avatarModels.js` — `CHIBI_BASE_MODEL` |
+| Hair | `hair-boy-2.glb` (`Hair_Boy`), `hair-girl-1.glb` (`Hair_Girl_1`) | `HAIR_PARTS` — rigid `attach()` to `mixamorigHead` |
+| Face | `lib/faceCanvasTexture.js` (Normal / Smile) | `FACE_PARTS` — offset in **meters**, synced each frame |
+| Shirt | `outfit/tshirt.glb` (`tshirt` mesh, skinned) | `OUTFIT_PARTS` — white / blue / yellow via toon `color` tint |
+
+**Base stats:** ~1.5 m tall, Mixamo rig (`mixamorigHead`, …), clips `idle` + `run`, feet at Y ≈ 0. Body Y rotation `Math.PI` in `avatarModels.js` so forward matches movement.
+
+**Outfit pipeline:** Shirt is **skinned** in Blender (weight transfer to body armature), exported **shirt mesh + armature only** (no body mesh). `ChibiAvatar.js` clones the skinned shirt and rebinds to the body's skeleton so sleeves follow arm animation. Multiple shirt colors share one GLB — tint via `OUTFIT_PARTS.color` (Option C modular mesh, not body material swap).
+
+### Dev toggles (`Game.js`, development only)
+
+| Key | Action |
+|-----|--------|
+| **`4`** | Toggle guest cat ↔ chibi |
+| **`5`** | Cycle face Normal ↔ Smile |
+| **`6`** | Cycle hair boy ↔ girl |
+| **`7`** | Cycle outfit white ↔ blue ↔ yellow |
+
+`appearance` shape: `{ hair: "boy", face: "normal", outfit: "yellow" }`. Passed from `Game.js` → `LocalPlayer` / `RemotePlayer` → `ChibiAvatar`.
+
+### Known limitations (acceptable for MVP)
+
+- Face is a **flat decal** on a round head — placement feels slightly unnatural; UV-painted head or blendshapes are a later polish.
+- Hair export must be **mesh only** (no body/armature in the hair GLB).
+- Shirt export must be **skinned** (shirt + armature); rigid spine-parent shirts do not follow arms.
+- Outfit colors are **toon tints** on one shirt mesh — separate fabric materials need separate GLBs.
+
+### Remaining tasks (from chibi avatar plan)
+
+| ID | Task | Status |
+|----|------|--------|
+| **C1** | `ChibiAvatar.js` + `avatarModels.js` + dev key `4` | ✅ Done |
+| **C2a** | Hair attach (boy + girl) + dev key `6` | ✅ Done |
+| **C2b** | Face decal (canvas Normal / Smile) + dev key `5` | ✅ Done (MVP) |
+| **C2c** | Modular outfit — skinned `tshirt.glb`, `OUTFIT_PARTS`, dev key `7` | ✅ Done |
+| **C3** | `CharacterCreator.js` overlay (CRT / translucent), `localStorage` for `appearance` | **Next** |
+| **D1** | Google OAuth — `LoginScreen`, `app/auth/callback/route.js`, guest = cat / logged-in = chibi | Pending |
+| **D2** | Supabase `players.appearance` jsonb + immediate upsert on change (not `SYNC_MS`); remote chibi appearance | Pending |
+| **Polish** | Remote chibi run blend; delete old `hair-boy.glb`; optional PNG/SVG faces instead of canvas | Backlog |
+
+**Recommended PR order:** C3 creator UI → D1 auth → D2 persist.
+
+---
+
+### AI prompts — hair & clothing (Meshy, Tripo, Rodin, etc.)
+
+Use **text-to-3D**, export **GLB or FBX**, then fit in Blender (tutorial below). Always ask for **low poly, game-ready, single object**.
+
+**Hair — short (boy):**
+```
+low poly chibi boy short hair, stylized cozy game asset, Animal Crossing style,
+rounded silhouette, clean quads, no realistic strands, no face, no body,
+neutral gray material, T-pose friendly, game-ready 3D model
+```
+
+**Hair — bob:**
+```
+low poly chibi bob haircut, stylized cozy game, ACNH style, rounded bangs,
+clean topology under 800 triangles, hair only no head no body, game asset GLB
+```
+
+**Shirt — white:**
+```
+low poly chibi crew neck t-shirt, short sleeves, stylized cozy game,
+single mesh shirt only no body no arms inside, flat white fabric,
+Animal Crossing villager style, game-ready 3D model
+```
+
+**Shirt — blue:**
+```
+same as white shirt but solid cozy blue #4a7ab8, low poly chibi t-shirt only mesh
+```
+
+**Tips for AI output:**
+- If the tool adds a full body, delete everything except hair or shirt in Blender before export.
+- Prefer **GLB** export from the AI tool; if only FBX, import to Blender and re-export GLB.
+- Free alternatives: [Quaternius Universal Base Characters](https://quaternius.itch.io/universal-base-characters) hairstyles + [Modular Outfits](https://quaternius.itch.io/modular-character-outfits-fantasy) (CC0) — still need scale/fit in Blender.
+
+---
+
+### Blender fit tutorial (Mac, beginner)
+
+**Install:** [blender.org](https://www.blender.org/download/) → drag Blender to Applications. First launch: **File → Defaults → Save Preferences** if you change anything.
+
+**Mac controls used here:**
+| Action | Mac shortcut |
+|--------|----------------|
+| Orbit | Middle-click drag (or **Option + drag**) |
+| Pan | **Shift + middle-click drag** |
+| Zoom | Scroll or **Cmd + scroll** |
+| Select | Left click |
+| Grab / move | **G** |
+| Rotate | **R** |
+| Scale | **S** |
+| Confirm | **Return** |
+| Cancel | **Esc** |
+| Delete | **X** → Delete |
+
+#### One-time reference setup
+
+1. **File → New → General**
+2. **File → Import → glTF 2.0** → pick `public/images/characters/player-base.glb` from this repo.
+3. You should see a ~1.5 m chibi. Press **N** → Viewport → set **Clip End** to `100` if the model clips.
+4. **File → Save As** → `soresore-avatar-ref.blend` (keep as reference; re-use for every new hair/shirt).
+
+#### Hair — fit AI mesh to head
+
+1. **Import** your AI hair GLB/FBX: **File → Import → glTF 2.0** (or FBX).
+2. **Delete extras:** Outliner (top-right) — remove any body/armature that came with the AI mesh. Keep **only** the hair mesh object.
+3. **Scale to match head:**
+   - Select hair, then body for reference. Hair selected → **S** → drag until hair wraps the head. Use **Numpad 1** (front) and **Numpad 3** (side) — on Mac without numpad: **View → Viewpoint → Front / Right**.
+   - Rough target: head is ~0.5 m wide; hair should sit on top Y ≈ 1.0–1.5 m (feet at 0).
+4. **Shrinkwrap (optional but easier):**
+   - Select hair → wrench icon **Modifiers** → **Add Modifier → Shrinkwrap**.
+   - Target: `Cube001` (body mesh). Offset: `0.01`. Apply modifier (**dropdown → Apply**).
+5. **Clean mesh:** **Tab** into Edit Mode → **A** select all → **Mesh → Clean Up → Merge by Distance**.
+6. **Origin:** Select hair → **Object → Set Origin → Origin to Geometry** (or Origin to 3D Cursor on scalp if you placed the cursor there).
+7. **Export hair only:**
+   - Select **only** the hair object.
+   - **File → Export → glTF 2.0 (.glb)**.
+   - ☑ **Selected Objects**. Format: **GLB**. Transform: **+Y Up**.
+   - Save as `public/images/characters/hair/hair-bob.glb` (or similar).
+8. **Register** in `lib/avatarParts.js` → `HAIR_PARTS` (copy `boy` entry, change `url` + `meshName` to match object name in GLB).
+
+**In-game tune:** `offset` / `rotation` on the hair entry, or re-export with better origin. Dev key **`4`** to view chibi.
+
+#### Shirt — fit AI mesh to torso (Option C, skinned)
+
+1. Open `soresore-avatar-ref.blend` with `player-base.glb` imported (body + armature).
+2. Import shirt GLB. Delete any body/legs/arms from AI output — **shirt mesh only**.
+3. Scale (**S**) and move (**G**) so shirt covers torso; sleeves should end at upper arm.
+4. Shrinkwrap to body mesh (same as hair, small offset `0.005–0.02`).
+5. **Weight transfer:** select shirt → **Shift**-select armature → **Ctrl+P** → **Armature Deform** → **Transfer Weights** (or Automatic Weights). Pose-mode test: arms should move the sleeves.
+6. **Export:** select **shirt mesh + armature** (not body mesh). **File → Export → glTF 2.0** → `public/images/characters/outfit/tshirt.glb`. Enable **Selected Objects**, **Mesh**, **Skinning**, **Armature**.
+7. Register in `lib/avatarParts.js` → `OUTFIT_PARTS`: `url`, `meshName` (object name in GLB, e.g. `tshirt`), `color` for tint. Extra colors can share the same GLB.
+
+#### Export checklist
+
+**Hair**
+- ☑ Hair mesh only selected — no armature / body  
+- ☑ Applied transforms if scale was messy  
+- ☑ File in `public/images/characters/hair/`  
+
+**Shirt (skinned)**
+- ☑ Shirt mesh **and** armature selected  
+- ☑ Skinning + Armature enabled in glTF export  
+- ☑ No body mesh in export (shirt + rig only)  
+- ☑ Re-import GLB in Blender to confirm sleeves deform with armature  
+- ☑ File in `public/images/characters/outfit/`  
+
+Test in game with **`4`** (chibi) and **`7`** (outfit cycle) after registry entry.
+
+#### Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Model tiny / huge in Blender | Select → **S** then type `50` or `0.01` + Return |
+| Hair floats in game | Re-export; tune `offset` in `avatarParts.js` |
+| Shirt sleeves stuck in T-pose in game | Export lost skinning — re-export shirt **+ armature** with Skinning on; or code path expects `isSkinnedMesh` |
+| Shirt works in Blender, not in game | GLB has no `JOINTS_0`/`WEIGHTS_0` — export included mesh only, not armature |
+| Pink mesh in game | Material is fine — game converts to toon; ensure GLB has a material |
+| Can't see after import | Outliner → click eye icon; press **Home** to frame all |
 
 ---
 
@@ -572,6 +757,20 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 
 ## Handoff — continue here (next session)
 
+**State (2026-06-12):** **Chibi avatar Phase C2 done** — body + hair (boy/girl) + face + skinned outfit wired (`ChibiAvatar.js`, dev keys `4`–`7`). Next: **C3 character creator UI** (`localStorage`), then **D1/D2** Google auth + Supabase `appearance`. Prior: east river log bridge (2026-06-08).
+
+**Done (2026-06-12) — chibi avatar (Phase C2):**
+- `public/images/characters/player-base.glb` — Mixamo chibi ~1.5 m, `idle` + `run`, skinned body mesh.
+- `public/images/characters/hair/hair-boy-2.glb`, `hair-girl-1.glb` — rigid hair meshes.
+- `public/images/characters/outfit/tshirt.glb` — skinned shirt (`tshirt`), shirt + armature only; white / blue / yellow via `OUTFIT_PARTS.color`.
+- `component/ChibiAvatar.js` — rigid hair attach, skinned outfit rebind to body skeleton, face sync.
+- `lib/avatarModels.js`, `lib/avatarParts.js`, `lib/faceCanvasTexture.js`.
+- `Game.js` dev **`4`** cat/chibi, **`5`** face, **`6`** hair, **`7`** outfit; `appearance` on local + remote players.
+
+**Chibi — next (small PRs):**
+1. **C3 — Character creator UI** — CRT overlay, `localStorage` for `appearance`.
+2. **D1 / D2 — Auth + Supabase `appearance`** — Google OAuth; guests = cat.
+
 **State (2026-06-08):** **East river log bridge shipped** — `bridge-log-2.glb`, ford tiles `BP`/`BW`, `walkSurfaceYAt` for deck-height player snap. Prior: inland river + water v5 + sync foot-snap (2026-06-07).
 
 **Done (2026-06-08) — bridge crossing:**
@@ -636,7 +835,7 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 - Surface-based footsteps (zones).
 - Second train / rail loop.
 - Station hut re-wire.
-- Remote extrapolation; chat/diary social UI; chibi modular avatar (Phases B–D); station SFX.
+- Remote extrapolation; chat/diary social UI; chibi C3/D (creator UI + auth + persist — see Chibi avatar section); face UV-paint polish; station SFX.
 
 **Naming:**
 - Tile-level: `tileGrid.js`, `tileModels.js`, `TileMap`, `TileModel`.
@@ -684,7 +883,7 @@ Cell form: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
 7. **PR 8b — Guest cat polish** (remote walk, appearance save, emotes).
 8. PR 9 — Stair GLB swap (Kenney wedge).
 9. PR 10 — Tile dressing overlays (lane stripes, brick joints).
-10. Surface footsteps; station SFX; social UI; chibi avatar Phases B–D; remote extrapolation; shadow polish.
+10. Surface footsteps; station SFX; social UI; chibi creator + auth (Phases C3–D); remote extrapolation; shadow polish.
 
 
 ---
@@ -700,6 +899,18 @@ npm run build
 
 ## Changelog (doc)
 
+- **2026-06-12 — Chibi avatar Phase C2 (end of day):**
+  - `outfit/tshirt.glb` — skinned shirt + armature; `OUTFIT_PARTS` white / blue / yellow tints on one mesh.
+  - `ChibiAvatar.js` — skinned outfit clone + skeleton rebind to body; rigid hair unchanged.
+  - `hair-girl-1.glb` registered; dev keys **`6`** (hair), **`7`** (outfit).
+  - `appearance: { hair, face, outfit }`; Blender tutorial updated for skinned shirt export.
+  - **Next:** C3 CharacterCreator UI + `localStorage`; D1/D2 auth + `players.appearance` jsonb.
+- **2026-06-09 — Chibi avatar Phase C partial (end of day):**
+  - `player-base.glb`, `hair/hair-boy-2.glb`; `ChibiAvatar.js`, `avatarModels.js`, `avatarParts.js`, `faceCanvasTexture.js`.
+  - Dev keys **`4`** (cat/chibi), **`5`** (face). `appearance: { hair, face }` on `LocalPlayer` / `RemotePlayer`.
+  - Face canvas decal + head sync in meters; hair via `attach()` + vertex offset in GLB.
+  - **Outfit decision:** modular shirt GLB (Option C), not material tint — documented AI prompts + Mac Blender tutorial in Chibi avatar section.
+  - **Remaining:** `OUTFIT_PARTS`, bob hair, CharacterCreator UI, Google auth, `players.appearance` jsonb.
 - **2026-06-08 — Log bridge crossing (end of day):**
   - `public/images/environments/bridge-log-2.glb` — ACNH Style 3+ plank bridge; `bridge` in `ENV_REGISTRY` / `Decoration.js`.
   - `lib/testTileMap.js`: `BP` / `BW` ford helpers on gz 20–21 gx 14–17; `BRIDGE_WALK_SURFACE_LIFT` (~0.22).

@@ -22,6 +22,12 @@ import {
   paletteFromSeed,
   presetIndexFromSeed,
 } from "@/lib/guestCatPalette";
+import {
+  DEFAULT_APPEARANCE,
+  FACE_KEYS,
+  HAIR_KEYS,
+  OUTFIT_KEYS,
+} from "@/lib/avatarParts";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -68,6 +74,9 @@ export default function Game() {
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);
   /** Dev only: `3` cycles guest cat prototype (Quaternius ↔ Tubbs). */
   const [catModel, setCatModel] = useState(DEFAULT_PLAYER_CAT);
+  /** Dev only: `4` toggles guest cat vs chibi avatar. */
+  const [avatarKind, setAvatarKind] = useState("cat");
+  const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   /** Dev only: `2` cycles GUEST_CAT_PRESETS for local cat color tuning. */
   const [devPresetIndex, setDevPresetIndex] = useState(() =>
     presetIndexFromSeed(playerId)
@@ -100,6 +109,40 @@ export default function Game() {
         setCatModel((current) => {
           const index = PLAYER_CAT_KEYS.indexOf(current);
           return PLAYER_CAT_KEYS[(index + 1) % PLAYER_CAT_KEYS.length];
+        });
+        return;
+      }
+
+      if (e.key === "4") {
+        setAvatarKind((kind) => (kind === "cat" ? "chibi" : "cat"));
+        return;
+      }
+
+      if (e.key === "5") {
+        setAppearance((current) => {
+          const index = FACE_KEYS.indexOf(current.face ?? DEFAULT_APPEARANCE.face);
+          const nextFace = FACE_KEYS[(index + 1) % FACE_KEYS.length];
+          return { ...current, face: nextFace };
+        });
+        return;
+      }
+
+      if (e.key === "6") {
+        setAppearance((current) => {
+          const index = HAIR_KEYS.indexOf(current.hair ?? DEFAULT_APPEARANCE.hair);
+          const nextHair = HAIR_KEYS[(index + 1) % HAIR_KEYS.length];
+          return { ...current, hair: nextHair };
+        });
+        return;
+      }
+
+      if (e.key === "7") {
+        setAppearance((current) => {
+          const index = OUTFIT_KEYS.indexOf(
+            current.outfit ?? DEFAULT_APPEARANCE.outfit
+          );
+          const nextOutfit = OUTFIT_KEYS[(index + 1) % OUTFIT_KEYS.length];
+          return { ...current, outfit: nextOutfit };
         });
         return;
       }
@@ -216,11 +259,22 @@ export default function Game() {
           <div>
             Cat: {PLAYER_CAT_MODELS[catModel]?.label ?? catModel} (3 swap)
           </div>
-          {catModel === "quaternius" && (
-            <div>
-              Preset: {localGuestPalette.name} ({devPresetIndex + 1}/
-              {GUEST_CAT_PRESETS.length} · 2 cycle)
-            </div>
+          <div>
+            Avatar: {avatarKind === "chibi" ? "Chibi" : "Guest cat"} (4 toggle)
+          </div>
+          {avatarKind === "chibi" ? (
+            <>
+              <div>Hair: {appearance.hair} (6 cycle)</div>
+              <div>Face: {appearance.face} (5 cycle)</div>
+              <div>Outfit: {appearance.outfit} (7 cycle)</div>
+            </>
+          ) : (
+            catModel === "quaternius" && (
+              <div>
+                Preset: {localGuestPalette.name} ({devPresetIndex + 1}/
+                {GUEST_CAT_PRESETS.length} · 2 cycle)
+              </div>
+            )
           )}
         </div>
       )}
@@ -235,6 +289,8 @@ export default function Game() {
         <LocalPlayer
           positionRef={myPositionRef}
           world={TEST_WORLD}
+          avatarKind={avatarKind}
+          appearance={appearance}
           catModel={catModel}
           guestPalette={catModel === "quaternius" ? localGuestPalette : null}
         />
@@ -244,6 +300,8 @@ export default function Game() {
             key={id}
             playerId={id}
             networkPosition={networkPosition}
+            avatarKind={avatarKind}
+            appearance={appearance}
             catModel={catModel}
           />
         ))}
