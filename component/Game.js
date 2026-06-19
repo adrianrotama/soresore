@@ -33,8 +33,10 @@ import {
 } from "@/lib/appearanceStorage";
 import { ensureAnonymousSession, setDisplayName as persistDisplayName } from "@/lib/playerIdentity";
 import {
+  appendMessage,
   getActiveBubbleMessage,
   messageFromRow,
+  MESSAGE_HISTORY_MAX,
   senderLabel,
 } from "@/lib/chat";
 import creatorStyles from "@/component/CharacterCreator.module.scss";
@@ -171,10 +173,12 @@ export default function Game() {
       const { data } = await supabase
         .from("messages")
         .select("id, sender_id, body, created_at")
-        .order("created_at", { ascending: true })
-        .limit(50);
+        .order("created_at", { ascending: false })
+        .limit(MESSAGE_HISTORY_MAX);
 
-      if (data) setMessages(data.map(messageFromRow));
+      if (data) {
+        setMessages(data.reverse().map(messageFromRow));
+      }
     }
 
     loadMessages();
@@ -186,10 +190,7 @@ export default function Game() {
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           const message = messageFromRow(payload.new);
-          setMessages((prev) => {
-            if (prev.some((entry) => entry.id === message.id)) return prev;
-            return [...prev, message];
-          });
+          setMessages((prev) => appendMessage(prev, message));
         }
       )
       .subscribe();

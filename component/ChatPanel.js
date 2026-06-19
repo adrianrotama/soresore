@@ -20,6 +20,7 @@ export default function ChatPanel({
   const [focused, setFocused] = useState(false);
   const [barHovered, setBarHovered] = useState(false);
   const logRef = useRef(null);
+  const inputRef = useRef(null);
 
   function scrollLogToEnd() {
     const log = logRef.current;
@@ -38,6 +39,51 @@ export default function ChatPanel({
     const timer = window.setTimeout(scrollLogToEnd, 300);
     return () => window.clearTimeout(timer);
   }, [focused]);
+
+  const canSend = ready && Boolean(playerId);
+
+  function blurInput() {
+    inputRef.current?.blur();
+  }
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.repeat) return;
+
+      const isEscape = e.key === "Escape" || e.code === "Escape";
+
+      if (isEscape) {
+        if (!focused) return;
+        e.preventDefault();
+        e.stopPropagation();
+        blurInput();
+        return;
+      }
+
+      if (e.key !== "Enter") return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (!canSend) return;
+      e.preventDefault();
+      inputRef.current?.focus();
+    }
+
+    // Capture phase — runs before OrbitControls / canvas eat Escape on Mac.
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [canSend, focused]);
+
+  function handleInputKeyDown(e) {
+    if (e.key !== "Escape" && e.code !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    blurInput();
+  }
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -62,7 +108,6 @@ export default function ChatPanel({
   const displayMessages = focused
     ? panelMessages
     : panelMessages.slice(-2);
-  const canSend = ready && Boolean(playerId);
 
   return (
     <div
@@ -96,13 +141,15 @@ export default function ChatPanel({
         onMouseLeave={() => setBarHovered(false)}
       >
         <input
+          ref={inputRef}
           className={styles.input}
           type="text"
           value={draft}
           maxLength={MAX_MESSAGE_LENGTH}
-          placeholder={!playerId ? "Connecting…" : "Type a message…"}
+          placeholder={!playerId ? "Connecting…" : "Press enter to send a message.."}
           disabled={!canSend}
           onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleInputKeyDown}
           onFocus={handleFocus}
           onBlur={handleBlur}
         />
