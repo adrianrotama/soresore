@@ -2,6 +2,14 @@
 
 Session history moved from GAME.md. Update at end-of-day handoff only.
 
+- **2026-06-19 — D1 Google OAuth (end of day):**
+  - `LoginScreen`, `NameModal`, `OnboardingShell.module.scss` — ACNH sunset CRT; guest vs Google.
+  - `app/auth/callback/page.js` — OAuth return; `finishAuthFromUrl()` in `lib/playerIdentity.js` (PKCE `?code=` + implicit `#access_token=` hash).
+  - `Game.js` — phase machine (`loading` → `login` → `name` → `creator` → `playing`); guest ephemeral (refresh → login); Google → name → creator → chibi.
+  - `players.display_name` — unique (case-insensitive), one-time via `NameModal`; removed name field from `CharacterCreator`.
+  - RLS consolidated for `authenticated` role (guest + Google); `docs/supabase-setup.sql` + `docs/supabase-dashboard.md` for project recreate.
+  - Remote players visible with server name tags; **still render as cat** until D2 `appearance` jsonb.
+  - **Next:** D2 appearance sync + remote chibi looks.
 - **2026-06-12 — GAME.md trim (doc):**
   - Slimmed `GAME.md` for AI agents (~1077 → ~305 lines): architecture + handoff only.
   - Moved session history → `CHANGELOG.md`; Blender tutorial → `docs/blender-avatar.md`; AI prompts → `docs/asset-prompts.md`.

@@ -12,6 +12,7 @@ export default function ChatPanel({
   messages,
   playerId,
   displayName,
+  players = {},
   onSend,
   onTypingChange,
   ready = true,
@@ -121,7 +122,12 @@ export default function ChatPanel({
         ) : (
           displayMessages.map((message) => {
             const isSelf = message.senderId === playerId;
-            const name = senderLabel(message.senderId, playerId, displayName);
+            const name = senderLabel(
+              message.senderId,
+              playerId,
+              displayName,
+              players[message.senderId]?.display_name
+            );
             return (
               <div
                 key={message.id}

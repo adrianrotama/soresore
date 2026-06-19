@@ -12,6 +12,8 @@ import World from "@/component/World";
 import GameAudio from "@/component/GameAudio";
 import CharacterCreator from "@/component/CharacterCreator";
 import ChatPanel from "@/component/ChatPanel";
+import LoginScreen from "@/component/LoginScreen";
+import NameModal from "@/component/NameModal";
 import { TEST_WORLD } from "@/lib/testWorld";
 import { TILE_LEVEL_HEIGHT } from "@/lib/world";
 import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
@@ -31,7 +33,17 @@ import {
   loadAppearance,
   saveAppearance,
 } from "@/lib/appearanceStorage";
-import { ensureAnonymousSession, setDisplayName as persistDisplayName } from "@/lib/playerIdentity";
+import {
+  claimDisplayName,
+  clearEphemeralGuestSession,
+  finishAuthFromUrl,
+  getAuthState,
+  getDisplayName,
+  getPlayerProfile,
+  setDisplayName as persistDisplayName,
+  signInAsGuest,
+  signInWithGoogle,
+} from "@/lib/playerIdentity";
 import {
   appendMessage,
   getActiveBubbleMessage,
@@ -60,6 +72,7 @@ function playerFromRow(row) {
     y: row.y,
     z: row.z,
     last_seen: row.last_seen,
+    display_name: row.display_name ?? null,
   };
 }
 
@@ -78,6 +91,7 @@ function pruneStalePlayers(players) {
 }
 
 export default function Game() {
+  const [phase, setPhase] = useState("loading");
   const [playerId, setPlayerId] = useState(null);
   const [displayName, setDisplayName] = useState("");
   const guestPalette = useMemo(
@@ -91,7 +105,6 @@ export default function Game() {
   /** Dev only: `4` toggles guest cat vs chibi avatar. */
   const [avatarKind, setAvatarKind] = useState("cat");
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
-  /** Character creator overlay — gate on first load, reopenable later. */
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [hasCreated, setHasCreated] = useState(false);
   /** Dev only: `2` cycles GUEST_CAT_PRESETS for local cat color tuning. */
@@ -106,59 +119,140 @@ export default function Game() {
     ? GUEST_CAT_PRESETS[devPresetIndex]
     : guestPalette;
 
-  // Anonymous auth — one session per tab (sessionStorage in lib/supabase.js).
+  const isPlaying = phase === "playing";
+  const overlayOpen = phase === "name" || phase === "creator" || creatorOpen;
+  const movementPaused = overlayOpen || chatFocused;
+
   useEffect(() => {
     let cancelled = false;
 
-    async function initAuth() {
+    async function init() {
       try {
-        const session = await ensureAnonymousSession();
+        const exchange = await finishAuthFromUrl();
         if (cancelled) return;
-        setPlayerId(session.userId);
-        setDisplayName(session.displayName);
-        setDevPresetIndex(presetIndexFromSeed(session.userId));
+        if (exchange.ok === false) {
+          console.error("[Game] OAuth code exchange failed:", exchange.error);
+          setPhase("login");
+          return;
+        }
+
+        const auth = await getAuthState();
+        if (cancelled) return;
+
+        if (auth.kind === "none") {
+          setPhase("login");
+          return;
+        }
+
+        if (auth.kind === "guest") {
+          // Guest play is per-visit only — refresh returns to login.
+          await clearEphemeralGuestSession();
+          if (cancelled) return;
+          setPhase("login");
+          return;
+        }
+
+        setPlayerId(auth.userId);
+
+        let profile = null;
+        try {
+          profile = await getPlayerProfile(auth.userId);
+        } catch (profileErr) {
+          // Google users use the `authenticated` role — RLS must allow SELECT own row.
+          console.error("[Game] profile fetch failed:", profileErr);
+        }
+        if (cancelled) return;
+
+        const serverName = profile?.display_name?.trim();
+        if (!serverName) {
+          setPhase("name");
+          return;
+        }
+
+        setDisplayName(serverName);
+        persistDisplayName(serverName);
+
+        const saved = loadAppearance();
+        setAppearance(saved);
+        if (hasCreatedCharacter()) {
+          setHasCreated(true);
+          setAvatarKind("chibi");
+          setPhase("playing");
+        } else {
+          setAvatarKind("chibi");
+          setCreatorOpen(true);
+          setPhase("creator");
+        }
       } catch (err) {
-        console.error("[Game] anonymous auth failed:", err);
+        console.error("[Game] init failed:", err);
+        if (cancelled) return;
+        try {
+          const auth = await getAuthState();
+          if (auth.kind === "logged_in") {
+            setPlayerId(auth.userId);
+            setPhase("name");
+            return;
+          }
+        } catch {
+          // fall through to login
+        }
+        setPhase("login");
       }
     }
 
-    initAuth();
+    init();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Hydrate saved look on mount; first-time visitors get the creator as a gate.
-  // NOTE (Phase D1): gate this behind an OAuth login — guests stay cats; only
-  // logged-in users see the creator / render as a chibi.
-  useEffect(() => {
-    const saved = loadAppearance();
-    setAppearance(saved);
-    if (hasCreatedCharacter()) {
-      setHasCreated(true);
-      setAvatarKind("chibi");
-    } else {
-      setAvatarKind("chibi");
-      setCreatorOpen(true);
-    }
-  }, []);
+  async function handleContinueAsGuest() {
+    const userId = await signInAsGuest();
+    setPlayerId(userId);
+    setDisplayName(getDisplayName(userId));
+    setAvatarKind("cat");
+    setDevPresetIndex(presetIndexFromSeed(userId));
+    setPhase("playing");
+  }
 
-  function handleConfirmAppearance(next, name) {
+  async function handleSignInWithGoogle() {
+    await signInWithGoogle();
+  }
+
+  async function handleNameSubmit(name) {
+    let uid = playerId;
+    if (!uid) {
+      const auth = await getAuthState();
+      if (auth.kind !== "logged_in") return "unknown";
+      uid = auth.userId;
+      setPlayerId(uid);
+    }
+
+    const result = await claimDisplayName(uid, name, myPositionRef.current);
+    if (!result.ok) {
+      return result.error ?? "unknown";
+    }
+
+    setDisplayName(result.displayName);
+    setAppearance(loadAppearance());
+    setAvatarKind("chibi");
+    setCreatorOpen(true);
+    setPhase("creator");
+    return null;
+  }
+
+  function handleConfirmAppearance(next) {
     setAppearance(next);
     setAvatarKind("chibi");
     saveAppearance(next);
-    const trimmed = name?.trim();
-    if (trimmed) {
-      persistDisplayName(trimmed);
-      setDisplayName(trimmed);
-    }
     setHasCreated(true);
     setCreatorOpen(false);
+    setPhase("playing");
   }
+
   // Network-authoritative positions from Supabase (not rendered directly).
   const [players, setPlayers] = useState({});
 
-  // Refresh bubble proximity + expiry while messages are active.
   useEffect(() => {
     const interval = setInterval(() => {
       setBubbleTick((tick) => tick + 1);
@@ -167,7 +261,7 @@ export default function Game() {
   }, []);
 
   useEffect(() => {
-    if (!playerId) return;
+    if (!playerId || !isPlaying) return;
 
     async function loadMessages() {
       const { data } = await supabase
@@ -198,7 +292,7 @@ export default function Game() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [playerId]);
+  }, [playerId, isPlaying]);
 
   async function handleSendMessage(body) {
     if (!playerId) return;
@@ -210,7 +304,7 @@ export default function Game() {
   }
 
   useEffect(() => {
-    if (!IS_DEV) return;
+    if (!IS_DEV || !isPlaying) return;
 
     function onKeyDown(e) {
       if (e.repeat) return;
@@ -268,13 +362,15 @@ export default function Game() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [isPlaying]);
 
   useEffect(() => {
+    if (!isPlaying) return;
+
     async function loadPlayers() {
       const { data } = await supabase
         .from("players")
-        .select("id, x, y, z, last_seen");
+        .select("id, x, y, z, last_seen, display_name");
 
       if (!data) return;
 
@@ -288,7 +384,6 @@ export default function Game() {
 
     loadPlayers();
 
-    // Client-only label for this browser's realtime subscription (not created in the dashboard).
     const channel = supabase
       .channel("players-room")
       .on(
@@ -317,9 +412,8 @@ export default function Game() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [isPlaying]);
 
-  // Prune stale players every PRUNE_MS
   useEffect(() => {
     const interval = setInterval(() => {
       setPlayers((prev) => pruneStalePlayers(prev));
@@ -328,10 +422,8 @@ export default function Game() {
     return () => clearInterval(interval);
   }, []);
 
-
-  // Upsert position on join, then every SYNC_MS.
   useEffect(() => {
-    if (!playerId) return;
+    if (!playerId || !isPlaying) return;
 
     async function upsertPosition() {
       const { x, y, z } = myPositionRef.current;
@@ -347,7 +439,7 @@ export default function Game() {
     upsertPosition();
     const interval = setInterval(upsertPosition, SYNC_MS);
     return () => clearInterval(interval);
-  }, [playerId]);
+  }, [playerId, isPlaying]);
 
   const remotePlayers = Object.entries(players).filter(
     ([id, player]) => id !== playerId && !isPlayerStale(player.last_seen)
@@ -373,10 +465,39 @@ export default function Game() {
 
   const localBubbleText = playerId ? bubbleTextFor(playerId) : null;
 
+  if (phase === "loading") {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "system-ui, sans-serif",
+          color: "#252a37",
+          background:
+            "radial-gradient(120% 120% at 50% 0%, rgba(252, 181, 127, 0.35) 0%, rgba(37, 42, 55, 0.72) 60%)",
+        }}
+      >
+        Loading…
+      </div>
+    );
+  }
+
   return (
     <>
-      <GameAudio />
-      {IS_DEV && (
+      {phase === "login" && (
+        <LoginScreen
+          onGuest={handleContinueAsGuest}
+          onGoogle={handleSignInWithGoogle}
+        />
+      )}
+
+      {phase === "name" && <NameModal onSubmit={handleNameSubmit} />}
+
+      {isPlaying && <GameAudio />}
+
+      {IS_DEV && isPlaying && (
         <div
           style={{
             position: "fixed",
@@ -413,55 +534,67 @@ export default function Game() {
           )}
         </div>
       )}
-      <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
-        <Environment />
-        <World data={TEST_WORLD} positionRef={myPositionRef} />
-        {useLegacyFollow ? (
-          <FollowCamera targetRef={myPositionRef} />
-        ) : (
-          <PlayerOrbitCamera positionRef={myPositionRef} />
-        )}
-        <LocalPlayer
-          positionRef={myPositionRef}
-          world={TEST_WORLD}
-          avatarKind={avatarKind}
-          appearance={appearance}
-          catModel={catModel}
-          guestPalette={catModel === "quaternius" ? localGuestPalette : null}
-          paused={creatorOpen || chatFocused}
-          chatBubbleText={localBubbleText}
-          nameTagText={displayName || null}
-        />
 
-        {remotePlayers.map(([id, networkPosition]) => (
-          <RemotePlayer
-            key={id}
-            playerId={id}
-            networkPosition={networkPosition}
+      {isPlaying && (
+        <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
+          <Environment />
+          <World data={TEST_WORLD} positionRef={myPositionRef} />
+          {useLegacyFollow ? (
+            <FollowCamera targetRef={myPositionRef} />
+          ) : (
+            <PlayerOrbitCamera positionRef={myPositionRef} />
+          )}
+          <LocalPlayer
+            positionRef={myPositionRef}
+            world={TEST_WORLD}
             avatarKind={avatarKind}
             appearance={appearance}
             catModel={catModel}
-            chatBubbleText={bubbleTextFor(id)}
-            nameTagText={senderLabel(id, playerId, displayName)}
+            guestPalette={catModel === "quaternius" ? localGuestPalette : null}
+            paused={movementPaused}
+            chatBubbleText={localBubbleText}
+            nameTagText={displayName || null}
           />
-        ))}
-      </Canvas>
 
-      {hasCreated && !creatorOpen && (
+          {remotePlayers.map(([id, networkPosition]) => (
+            <RemotePlayer
+              key={id}
+              playerId={id}
+              networkPosition={networkPosition}
+              avatarKind="cat"
+              appearance={appearance}
+              catModel={catModel}
+              chatBubbleText={bubbleTextFor(id)}
+              nameTagText={senderLabel(
+                id,
+                playerId,
+                displayName,
+                networkPosition.display_name
+              )}
+            />
+          ))}
+        </Canvas>
+      )}
+
+      {isPlaying && hasCreated && avatarKind === "chibi" && !creatorOpen && (
         <button
           type="button"
           className={creatorStyles.reopenBtn}
-          onClick={() => setCreatorOpen(true)}
+          onClick={() => {
+            setCreatorOpen(true);
+            setPhase("creator");
+          }}
         >
           Edit look
         </button>
       )}
 
-      {hasCreated && !creatorOpen && (
+      {isPlaying && hasCreated && !creatorOpen && (
         <ChatPanel
           messages={messages}
           playerId={playerId}
           displayName={displayName}
+          players={players}
           onSend={handleSendMessage}
           onTypingChange={setChatFocused}
           ready={Boolean(playerId)}
@@ -469,12 +602,16 @@ export default function Game() {
       )}
 
       <CharacterCreator
-        open={creatorOpen}
+        open={phase === "creator" || creatorOpen}
         appearance={appearance}
-        displayName={displayName}
         canClose={hasCreated}
         onConfirm={handleConfirmAppearance}
-        onClose={() => setCreatorOpen(false)}
+        onClose={() => {
+          setCreatorOpen(false);
+          if (phase === "creator") {
+            setPhase("playing");
+          }
+        }}
       />
     </>
   );

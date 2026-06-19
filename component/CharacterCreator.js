@@ -122,14 +122,12 @@ function SwatchRow({ options, value, onSelect }) {
 export default function CharacterCreator({
   open,
   appearance,
-  displayName = "",
   onConfirm,
   onClose,
   canClose = false,
 }) {
   const [tab, setTab] = useState("hair");
   const [draft, setDraft] = useState(appearance ?? DEFAULT_APPEARANCE);
-  const [nameDraft, setNameDraft] = useState(displayName);
   const [autoSpin, setAutoSpin] = useState(true);
   const rotationRef = useRef(0);
   const draggingRef = useRef(false);
@@ -141,12 +139,11 @@ export default function CharacterCreator({
   useEffect(() => {
     if (open) {
       setDraft(appearance ?? DEFAULT_APPEARANCE);
-      setNameDraft(displayName || "");
       setTab("hair");
       setAutoSpin(true);
       rotationRef.current = 0;
     }
-  }, [open, appearance, displayName]);
+  }, [open, appearance]);
 
   function onStagePointerDown(e) {
     if (e.button !== 0) return;
@@ -221,8 +218,6 @@ export default function CharacterCreator({
       outfitColor: randomKey(OUTFIT_COLOR_KEYS),
     });
 
-  const canEnter = nameDraft.trim().length > 0;
-
   return (
     <div className={styles.overlay}>
       <div className={styles.panel}>
@@ -278,21 +273,6 @@ export default function CharacterCreator({
         <div className={styles.controls}>
           <h2 className={styles.title}>Create your character</h2>
           <p className={styles.subtitle}>Pick a cozy look for your villager.</p>
-
-          <div className={styles.nameField}>
-            <label className={styles.sectionLabel} htmlFor="creator-name">
-              Name
-            </label>
-            <input
-              id="creator-name"
-              className={styles.nameInput}
-              type="text"
-              value={nameDraft}
-              maxLength={24}
-              placeholder="Your villager name"
-              onChange={(e) => setNameDraft(e.target.value)}
-            />
-          </div>
 
           <div className={styles.tabs}>
             {TABS.map(({ id, label }) => (
@@ -382,8 +362,7 @@ export default function CharacterCreator({
             <button
               type="button"
               className={styles.primaryBtn}
-              disabled={!canEnter}
-              onClick={() => onConfirm(draft, nameDraft.trim())}
+              onClick={() => onConfirm(draft)}
             >
               Enter world
             </button>

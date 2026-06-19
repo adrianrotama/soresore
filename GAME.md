@@ -1,6 +1,6 @@
 # Soresore — Game architecture & handoff
 
-> **For AI agents:** Read this before changing multiplayer, movement, camera, world, or avatar code. Visual/MVP direction: `AGENTS.md`. Next.js quirks: `node_modules/next/dist/docs/`. Session history: `CHANGELOG.md`. Asset authoring: `docs/blender-avatar.md`.
+> **For AI agents:** Read this before changing multiplayer, movement, camera, world, or avatar code. Visual/MVP direction: `AGENTS.md`. Next.js quirks: `node_modules/next/dist/docs/`. Session history: `CHANGELOG.md`. Asset authoring: `docs/blender-avatar.md`. **Supabase recreate:** `docs/supabase-setup.sql` + `docs/supabase-dashboard.md`.
 
 ### Doc maintenance (agents)
 
@@ -19,7 +19,7 @@
 - **Foot-snap in `useMemo`** (`EnvironmentModel`, `TileModel`) — **not** `useLayoutEffect` (caused one-frame ~1 m drop).
 - **Train route Y** uses `TILE_LEVEL_HEIGHT` in `start[1]` / `end[1]` — don't hardcode `y = 0`.
 
-Browser multiplayer 3D prototype. **One tab = one player** via Supabase **anonymous auth** (`sessionStorage` — tabs stay isolated). Positions + chat sync via **Supabase Realtime**. Chibi + creator wired; **D1 OAuth** still pending.
+Browser multiplayer 3D prototype. **One tab = one player** via Supabase auth (`sessionStorage` — tabs stay isolated). **Guests** = ephemeral anonymous cat (refresh → login). **Google** = chibi + creator. Positions + chat sync via **Supabase Realtime**. **D1 OAuth done**; **D2** appearance sync pending.
 
 ---
 
@@ -39,7 +39,11 @@ Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
 ```
 app/page.js                 → full-viewport <Game />
-component/Game.js           → Canvas, Supabase sync, CharacterCreator, mounts <World>
+app/auth/callback/page.js     → OAuth return; hash + PKCE session handoff
+component/Game.js           → phase machine, Canvas, Supabase sync, mounts <World>
+component/LoginScreen.js    → Google + Continue as guest (ACNH overlay)
+component/NameModal.js      → one-time unique display_name (logged-in only)
+component/OnboardingShell.module.scss → shared sunset/CRT modal styles
 component/World.js          → TileMap + Decoration[] + Landmark[]; dev CollisionDebug
 component/TileMap.js        → 2D map → <TileModel>; cliff TileBank
 component/TileModel.js      → tile GLB; palette repaint or nativeColor; foot-snap in useMemo
@@ -52,7 +56,7 @@ component/LocalPlayer.js    → input, movement, bob/squash, footsteps; PlayerAv
 component/RemotePlayer.js     → network vs visual position
 component/PlayerAvatar.js   → guest Quaternius cat, Idle/Walk
 component/ChibiAvatar.js      → body + hair + skinned outfit + face decal
-component/CharacterCreator.js → avatar customizer overlay (3D preview, tabs, name, localStorage)
+component/CharacterCreator.js → avatar customizer overlay (3D preview, tabs; appearance only)
 component/CharacterCreator.module.scss
 component/ChatPanel.js          → bottom-center chat log + input (focus/hover states)
 component/ChatPanel.module.scss
@@ -83,9 +87,9 @@ lib/trainRoute.js             → train route constants (source of truth for tun
 lib/environmentModels.js      → ENV_REGISTRY (url + collision per kind)
 lib/interpolation.js          → lerpPosition (remotes)
 lib/gameAudio.js              → ambience + footstep ticks
-lib/supabase.js               → Supabase client; auth in sessionStorage (per tab)
-lib/playerIdentity.js         → ensureAnonymousSession, display name (sessionStorage)
-lib/chat.js                   → CHAT_RADIUS, BUBBLE_TTL_MS, proximity helpers
+lib/supabase.js               → Supabase client; sessionStorage per tab; flowType pkce
+lib/playerIdentity.js         → auth (guest/Google), finishAuthFromUrl, claimDisplayName, profiles
+lib/chat.js                   → CHAT_RADIUS, BUBBLE_TTL_MS, proximity helpers, senderLabel
 ```
 
 ---
@@ -93,25 +97,40 @@ lib/chat.js                   → CHAT_RADIUS, BUBBLE_TTL_MS, proximity helpers
 ## Multiplayer
 
 ```
-playerId = auth.uid()  (anonymous sign-in per tab — lib/playerIdentity.js)
+playerId = auth.uid()  (guest anonymous OR Google — lib/playerIdentity.js)
 LocalPlayer → positionRef (every frame)
-Game → upsert on join + every SYNC_MS
-Game → players state from select + realtime postgres_changes
-RemotePlayer → lerps visual toward network target
+Game → upsert on join + every SYNC_MS (position only — does not overwrite display_name)
+Game → players state from select + realtime postgres_changes (incl. display_name)
+RemotePlayer → lerps visual toward network target; avatarKind hardcoded cat until D2
 Stale players pruned via last_seen (no DELETE)
 ```
 
-**Dashboard:** enable **Anonymous sign-ins** (Auth) + Realtime on `players` and `messages`.
+**Dashboard:** enable **Anonymous sign-ins** + **Google** (Auth). Realtime on `players` and `messages`. Full recreate: `docs/supabase-setup.sql`, `docs/supabase-dashboard.md`.
+
+### Auth & onboarding (Phase D1 done)
+
+| Phase | UI | Avatar |
+|-------|-----|--------|
+| `login` | `LoginScreen` | — |
+| `name` | `NameModal` — unique `display_name`, one-time | — |
+| `creator` | `CharacterCreator` — appearance only | chibi preview |
+| `playing` | world + chat | guest=cat, logged-in=chibi |
+
+- **Guest:** `signInAsGuest()` → play as cat; **refresh signs out** → login again (ephemeral).
+- **Google:** `signInWithOAuth` → `/auth/callback` → `finishAuthFromUrl()` (handles `#access_token` hash **and** `?code=` PKCE).
+- **Name:** `claimDisplayName()` upserts `players.display_name`; case-insensitive unique index; not editable after claim.
+- **Appearance:** still `localStorage` only — **D2** will add `players.appearance` jsonb.
 
 ### Supabase `players` table
 
 | Column | Notes |
 |--------|--------|
-| `id` | uuid PK, per tab |
+| `id` | uuid PK = `auth.uid()` |
 | `x`, `y`, `z` | World position; spawn `y: TILE_LEVEL_HEIGHT + 0.5` |
 | `last_seen` | Heartbeat |
+| `display_name` | text, unique (lower trim), 2–24 chars; logged-in only |
 
-Realtime on `players`. RLS: anon SELECT + upsert. Channel `players-room`.
+Realtime on `players`. RLS: `authenticated` SELECT all rows; INSERT/UPDATE own row only. Channel `players-room`.
 
 ### Timing (`Game.js`)
 
@@ -147,7 +166,7 @@ Realtime on `players`. RLS: anon SELECT + upsert. Channel `players-room`.
 
 ## Chat (Phase E1 done)
 
-**Identity:** `ensureAnonymousSession()` on mount → `players.id` and `messages.sender_id` = `auth.uid()`. Display name in `sessionStorage` key `soresore.displayName` — set in **CharacterCreator** (required); remotes fall back to `Guest-xxxx` until names are synced server-side.
+**Identity:** `auth.uid()` → `players.id` and `messages.sender_id`. **Logged-in** display name on server (`players.display_name`); session cache `soresore.displayName`. **Guests** = `Guest-xxxx` from id slice. Chat/remotes read `display_name` from `players` row when present.
 
 ### Supabase `messages` table
 
@@ -168,7 +187,7 @@ Constants in `lib/chat.js`: `CHAT_RADIUS` (~10 m XZ), `BUBBLE_TTL_MS` (~10 s). `
 
 ### Chat panel (`ChatPanel.js`)
 
-Shown only after character confirm (`hasCreated && !creatorOpen`). Bottom-center; ACNH cream/mint styling.
+Shown only when `phase === playing` && `hasCreated` (logged-in chibi after creator confirm). Bottom-center; ACNH cream/mint styling.
 
 | State | Log | Bar | Movement |
 |-------|-----|-----|----------|
@@ -178,7 +197,7 @@ Shown only after character confirm (`hasCreated && !creatorOpen`). Bottom-center
 
 ### Not done (chat)
 
-Remote display names on Supabase; whispers/friends; diary popup; rate limits; OAuth upgrade path (anonymous → Google).
+Whispers/friends; diary popup; rate limits.
 
 ---
 
@@ -191,7 +210,7 @@ Remote display names on Supabase; whispers/friends; diary popup; rate limits; OA
 
 Never bind mesh directly to `Game.js` `players` state.
 
-**Not done:** remote walk blend; extrapolation; networked appearance.
+**Not done:** remote walk blend; extrapolation; networked appearance (**D2** — remotes render as cat today).
 
 ---
 
@@ -226,9 +245,9 @@ Tuning in `lib/gameAudio.js` (`FOOTSTEP_VOLUME`, `AMBIENCE_VOLUME`, `MIN_MOVING_
 
 ---
 
-## Chibi avatar + creator (Phase C3 done)
+## Chibi avatar + creator (Phase C3 done, D1 gated)
 
-**Goal:** Logged-in players = modular chibi. Guests = cat until **D1** OAuth gates creator to logged-in users only.
+**Goal:** Logged-in (Google) = modular chibi + creator. Guests = cat only.
 
 ### Parts
 
@@ -253,14 +272,14 @@ Registries: `lib/avatarParts.js`. Persisted: `localStorage` key `soresore.appear
 
 | Feature | Behavior |
 |---------|----------|
-| Gate | First load without saved appearance |
-| Reopen | **Edit look** button — top-right after confirm |
-| Name | Required text field; persisted via `lib/playerIdentity.js`; shown on avatar via `NameTag` |
+| Gate | Logged-in user without `localStorage` appearance |
+| Reopen | **Edit look** — appearance only; name locked |
+| Name | **Not here** — `NameModal` before creator (one-time, server unique) |
 | Tabs | Hair / Face / Outfit — style chips + color swatches (8 each for hair/outfit) |
 | Preview | Nested Canvas + ChibiAvatar; drag rotate; pause/resume spin |
 | Camera | Hair/Face → head zoom; Outfit → full body (`PreviewCamera` lerp) |
 | Facing | `PREVIEW_FACING_YAW = Math.PI` offsets body rotation so preview faces camera |
-| Confirm | Forces `avatarKind = "chibi"`, saves appearance, unpauses world |
+| Confirm | Saves appearance to `localStorage`, `avatarKind = "chibi"`, unpauses world |
 
 **Dev keys:** `4` cat↔chibi, `5` face, `6` hair style, `7` outfit style.
 
@@ -268,8 +287,7 @@ Registries: `lib/avatarParts.js`. Persisted: `localStorage` key `soresore.appear
 
 | ID | Task |
 |----|------|
-| **D1** | Google OAuth — guest=cat, logged-in=chibi, creator gated |
-| **D2** | `players.appearance` jsonb + immediate upsert (not `SYNC_MS`) |
+| **D2** | `players.appearance` jsonb + immediate upsert; remote chibi looks + walk blend |
 
 New hair/shirt GLBs: `docs/blender-avatar.md`.
 
@@ -319,14 +337,14 @@ walkSurfaceYAt(world, gx, gz)
 
 ## Handoff — continue here
 
-**State (2026-06-19):** Chat **E1 done** — anonymous auth (per-tab), proximity bubbles, `ChatPanel`, name in creator + `NameTag`. Chibi **C3 done**. **Next: D1** OAuth, then **D2** appearance + remote display names.
+**State (2026-06-19):** **D1 done** — `LoginScreen`, `NameModal`, Google OAuth + callback (hash + PKCE), guest ephemeral sessions, `players.display_name` unique, consolidated RLS, remote name tags. Chat **E1** + Chibi **C3** unchanged. **Remotes still render as cat** until D2. **Next: D2** appearance jsonb + immediate upsert.
 
 ### Next (priority order)
 
-1. **D1 — Google OAuth** — `LoginScreen`, `app/auth/callback/route.js`; upgrade/link anonymous user; gate creator.
-2. **D2 — Supabase profile** — `players.appearance` jsonb + `display_name`; immediate upsert; remote chibi looks + name tags.
-3. **PR 5b** — decoration collision polish (`canMoveTo` same-cell pass-through, railings).
-4. **PR 8b** — remote cat walk animation; guest emotes.
+1. **D2 — Supabase profile** — `players.appearance` jsonb; immediate upsert on creator confirm/edit; `RemotePlayer` reads server look; guest stays cat.
+2. **PR 5b** — decoration collision polish (`canMoveTo` same-cell pass-through, railings).
+3. **PR 8b** — remote cat walk animation; guest emotes.
+4. **Timing** — retune `STALE_MS` > `SYNC_MS` together when ready (remotes prune quickly today).
 
 ### Open bugs / traps
 
@@ -334,7 +352,9 @@ walkSurfaceYAt(world, gx, gz)
 - **Bridge Y:** walk lift on `walkSurfaceYAt` only — `surfaceYOffset` on `surfaceYAt` moved bridge + cat together.
 - **Rail `gz`:** use `worldZToGridGz` (half-cell offset vs integer division).
 - **Collision:** white debug tiles sometimes passable; railings block full grid tiles in Z.
-- **Creator:** not OAuth-gated yet; remotes share local `appearance`.
+- **OAuth callback:** Supabase may return `#access_token=` hash — `finishAuthFromUrl()` handles both hash and `?code=`.
+- **Guest refresh:** always returns to login (intentional); clears anonymous session on load.
+- **RemotePlayer:** `avatarKind="cat"` hardcoded in `Game.js` until D2.
 - **Chat Html:** bubble/name tag need `width: max-content` — do not remove.
 - **Chat panel:** collapsed log uses `slice(-2)` — do not rely on scroll position when unfocused.
 
@@ -349,5 +369,7 @@ Surface footsteps by zone; diary/friend popups; second train; station hut re-wir
 | File | Contents |
 |------|----------|
 | `CHANGELOG.md` | End-of-day session history |
+| `docs/supabase-setup.sql` | Full schema + RLS — run on new Supabase project |
+| `docs/supabase-dashboard.md` | Auth, Google OAuth, Realtime, env checklist |
 | `docs/blender-avatar.md` | Fit hair/shirt GLBs in Blender |
 | `AGENTS.md` | Visual direction, cozy camera rules |
