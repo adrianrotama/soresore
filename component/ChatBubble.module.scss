@@ -1,0 +1,52 @@
+.bubble {
+  position: relative;
+  width: max-content;
+  max-width: 180px;
+  padding: 7px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #5c5348;
+  text-align: center;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  background: rgba(255, 250, 235, 0.96);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 3px 10px rgba(90, 154, 110, 0.2);
+  animation: bubbleIn 0.2s ease both;
+
+  // Tail border (white outline)
+  &::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -12px;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: rgba(255, 255, 255, 0.9);
+  }
+
+  // Tail fill
+  &::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -9px;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: rgba(255, 250, 235, 0.96);
+  }
+}
+
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

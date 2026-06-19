@@ -16,6 +16,8 @@ import {
   OUTFIT_COLORS,
   OUTFIT_KEYS,
   OUTFIT_PARTS,
+  SKIN_COLOR_KEYS,
+  SKIN_COLORS,
 } from "@/lib/avatarParts";
 import styles from "./CharacterCreator.module.scss";
 
@@ -26,8 +28,8 @@ const TABS = [
 ];
 
 const CAMERA_FOCUS = {
-  body: { position: [0, 1.25, 2.7], target: [0, 0, 0], fov: 38 },
-  head: { position: [0, 0.8, 1.72], target: [0, 0, 0], fov: 32 },
+  body: { position: [0, 1.25, 4.5], target: [0, 0.3, 0], fov: 38 },
+  head: { position: [1, 0.8, 2.6], target: [0, 0.3, 0], fov: 32 },
 };
 
 const _camPos = new Vector3();
@@ -120,12 +122,14 @@ function SwatchRow({ options, value, onSelect }) {
 export default function CharacterCreator({
   open,
   appearance,
+  displayName = "",
   onConfirm,
   onClose,
   canClose = false,
 }) {
   const [tab, setTab] = useState("hair");
   const [draft, setDraft] = useState(appearance ?? DEFAULT_APPEARANCE);
+  const [nameDraft, setNameDraft] = useState(displayName);
   const [autoSpin, setAutoSpin] = useState(true);
   const rotationRef = useRef(0);
   const draggingRef = useRef(false);
@@ -137,11 +141,12 @@ export default function CharacterCreator({
   useEffect(() => {
     if (open) {
       setDraft(appearance ?? DEFAULT_APPEARANCE);
+      setNameDraft(displayName || "");
       setTab("hair");
       setAutoSpin(true);
       rotationRef.current = 0;
     }
-  }, [open, appearance]);
+  }, [open, appearance, displayName]);
 
   function onStagePointerDown(e) {
     if (e.button !== 0) return;
@@ -192,6 +197,15 @@ export default function CharacterCreator({
       })),
     []
   );
+  const skinColors = useMemo(
+    () =>
+      SKIN_COLOR_KEYS.map((key) => ({
+        key,
+        label: SKIN_COLORS[key].label,
+        color: SKIN_COLORS[key].color,
+      })),
+    []
+  );
 
   if (!open) return null;
 
@@ -202,9 +216,12 @@ export default function CharacterCreator({
       hair: randomKey(HAIR_KEYS),
       hairColor: randomKey(HAIR_COLOR_KEYS),
       face: randomKey(FACE_KEYS),
+      skinColor: randomKey(SKIN_COLOR_KEYS),
       outfit: randomKey(OUTFIT_KEYS),
       outfitColor: randomKey(OUTFIT_COLOR_KEYS),
     });
+
+  const canEnter = nameDraft.trim().length > 0;
 
   return (
     <div className={styles.overlay}>
@@ -262,6 +279,21 @@ export default function CharacterCreator({
           <h2 className={styles.title}>Create your character</h2>
           <p className={styles.subtitle}>Pick a cozy look for your villager.</p>
 
+          <div className={styles.nameField}>
+            <label className={styles.sectionLabel} htmlFor="creator-name">
+              Name
+            </label>
+            <input
+              id="creator-name"
+              className={styles.nameInput}
+              type="text"
+              value={nameDraft}
+              maxLength={24}
+              placeholder="Your villager name"
+              onChange={(e) => setNameDraft(e.target.value)}
+            />
+          </div>
+
           <div className={styles.tabs}>
             {TABS.map(({ id, label }) => (
               <button
@@ -302,6 +334,12 @@ export default function CharacterCreator({
                   options={faceStyles}
                   value={draft.face}
                   onSelect={(key) => set({ face: key })}
+                />
+                <div className={styles.sectionLabel}>Skin</div>
+                <SwatchRow
+                  options={skinColors}
+                  value={draft.skinColor}
+                  onSelect={(key) => set({ skinColor: key })}
                 />
               </>
             )}
@@ -344,7 +382,8 @@ export default function CharacterCreator({
             <button
               type="button"
               className={styles.primaryBtn}
-              onClick={() => onConfirm(draft)}
+              disabled={!canEnter}
+              onClick={() => onConfirm(draft, nameDraft.trim())}
             >
               Enter world
             </button>

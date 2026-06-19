@@ -14,6 +14,8 @@ import {
 import { TILE_SIZE } from "@/lib/tileGrid";
 import PlayerAvatar from "@/component/PlayerAvatar";
 import ChibiAvatar from "@/component/ChibiAvatar";
+import ChatBubble from "@/component/ChatBubble";
+import NameTag from "@/component/NameTag";
 import { DEFAULT_APPEARANCE } from "@/lib/avatarParts";
 import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
 
@@ -140,6 +142,8 @@ export default function LocalPlayer({
   catModel = DEFAULT_PLAYER_CAT,
   guestPalette,
   paused = false,
+  chatBubbleText = null,
+  nameTagText = null,
 }) {
   const { camera } = useThree();
   const meshRef = useRef();
@@ -354,6 +358,8 @@ export default function LocalPlayer({
           guestPalette={guestPalette}
         />
       )}
+      <NameTag name={nameTagText} />
+      <ChatBubble text={chatBubbleText} />
     </group>
   );
 }

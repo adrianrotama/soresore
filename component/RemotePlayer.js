@@ -5,6 +5,8 @@ import { useFrame } from "@react-three/fiber";
 import { lerpPosition } from "@/lib/interpolation";
 import PlayerAvatar from "@/component/PlayerAvatar";
 import ChibiAvatar from "@/component/ChibiAvatar";
+import ChatBubble from "@/component/ChatBubble";
+import NameTag from "@/component/NameTag";
 import { DEFAULT_APPEARANCE } from "@/lib/avatarParts";
 import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
 import { paletteFromSeed } from "@/lib/guestCatPalette";
@@ -19,6 +21,8 @@ export default function RemotePlayer({
   avatarKind = "cat",
   appearance = DEFAULT_APPEARANCE,
   catModel = DEFAULT_PLAYER_CAT,
+  chatBubbleText = null,
+  nameTagText = null,
 }) {
   const guestPalette =
     catModel === "quaternius" && playerId ? paletteFromSeed(playerId) : null;
@@ -54,6 +58,8 @@ export default function RemotePlayer({
           guestPalette={guestPalette}
         />
       )}
+      <NameTag name={nameTagText} />
+      <ChatBubble text={chatBubbleText} />
     </group>
   );
 }

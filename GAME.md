@@ -19,7 +19,7 @@
 - **Foot-snap in `useMemo`** (`EnvironmentModel`, `TileModel`) — **not** `useLayoutEffect` (caused one-frame ~1 m drop).
 - **Train route Y** uses `TILE_LEVEL_HEIGHT` in `start[1]` / `end[1]` — don't hardcode `y = 0`.
 
-Browser multiplayer 3D prototype. One tab = one player. Positions sync via **Supabase**. Guests = Quaternius cat; chibi + creator UI wired (OAuth gate = Phase D1).
+Browser multiplayer 3D prototype. **One tab = one player** via Supabase **anonymous auth** (`sessionStorage` — tabs stay isolated). Positions + chat sync via **Supabase Realtime**. Chibi + creator wired; **D1 OAuth** still pending.
 
 ---
 
@@ -52,8 +52,14 @@ component/LocalPlayer.js    → input, movement, bob/squash, footsteps; PlayerAv
 component/RemotePlayer.js     → network vs visual position
 component/PlayerAvatar.js   → guest Quaternius cat, Idle/Walk
 component/ChibiAvatar.js      → body + hair + skinned outfit + face decal
-component/CharacterCreator.js → avatar customizer overlay (3D preview, tabs, localStorage)
+component/CharacterCreator.js → avatar customizer overlay (3D preview, tabs, name, localStorage)
 component/CharacterCreator.module.scss
+component/ChatPanel.js          → bottom-center chat log + input (focus/hover states)
+component/ChatPanel.module.scss
+component/ChatBubble.js          → 3D speech bubble (`Html`; `CHAT_BUBBLE_Y`)
+component/ChatBubble.module.scss
+component/NameTag.js              → display name above avatar (`Html`)
+component/NameTag.module.scss
 component/PlayerOrbitCamera.js → default orbit follow
 component/FollowCamera.js   → legacy fixed follow (dev toggle)
 component/Environment.js      → ground, fog, lights
@@ -77,7 +83,9 @@ lib/trainRoute.js             → train route constants (source of truth for tun
 lib/environmentModels.js      → ENV_REGISTRY (url + collision per kind)
 lib/interpolation.js          → lerpPosition (remotes)
 lib/gameAudio.js              → ambience + footstep ticks
-lib/supabase.js
+lib/supabase.js               → Supabase client; auth in sessionStorage (per tab)
+lib/playerIdentity.js         → ensureAnonymousSession, display name (sessionStorage)
+lib/chat.js                   → CHAT_RADIUS, BUBBLE_TTL_MS, proximity helpers
 ```
 
 ---
@@ -85,13 +93,15 @@ lib/supabase.js
 ## Multiplayer
 
 ```
-playerId = crypto.randomUUID()
+playerId = auth.uid()  (anonymous sign-in per tab — lib/playerIdentity.js)
 LocalPlayer → positionRef (every frame)
-Game → upsert positionRef every SYNC_MS
+Game → upsert on join + every SYNC_MS
 Game → players state from select + realtime postgres_changes
 RemotePlayer → lerps visual toward network target
 Stale players pruned via last_seen (no DELETE)
 ```
+
+**Dashboard:** enable **Anonymous sign-ins** (Auth) + Realtime on `players` and `messages`.
 
 ### Supabase `players` table
 
@@ -131,7 +141,44 @@ Realtime on `players`. RLS: anon SELECT + upsert. Channel `players-room`.
 
 **Footsteps:** `consumeStepTicks` — one tick per full bob cycle (`STEP_PHASE_RADIANS = 2π`).
 
-**`paused` prop:** when `CharacterCreator` is open, clears keys and skips movement integration.
+**`paused` prop:** when `CharacterCreator` is open **or chat input is focused**, clears keys and skips movement integration.
+
+---
+
+## Chat (Phase E1 done)
+
+**Identity:** `ensureAnonymousSession()` on mount → `players.id` and `messages.sender_id` = `auth.uid()`. Display name in `sessionStorage` key `soresore.displayName` — set in **CharacterCreator** (required); remotes fall back to `Guest-xxxx` until names are synced server-side.
+
+### Supabase `messages` table
+
+| Column | Notes |
+|--------|--------|
+| `id` | uuid PK |
+| `sender_id` | uuid FK → `auth.users(id)` |
+| `body` | text, max 140 chars |
+| `created_at` | timestamptz |
+
+RLS: authenticated SELECT all; INSERT own row only. Realtime channel `chat-room` (INSERT events). **Chat sends are immediate** — not tied to `SYNC_MS`.
+
+### Proximity bubbles
+
+Constants in `lib/chat.js`: `CHAT_RADIUS` (~10 m XZ), `BUBBLE_TTL_MS` (~10 s). `Game.js` filters active bubble per sender using local position + remote `players` positions. Rendered via `ChatBubble` + `NameTag` on `LocalPlayer` / `RemotePlayer`.
+
+**Html trap:** drei `<Html>` wrapper collapses width → one char per line. Fix: `width: max-content` on wrapper + bubble; `word-break: normal`.
+
+### Chat panel (`ChatPanel.js`)
+
+Shown only after character confirm (`hasCreated && !creatorOpen`). Bottom-center; ACNH cream/mint styling.
+
+| State | Log | Bar | Movement |
+|-------|-----|-----|----------|
+| Default | 2 lines, last 2 msgs (`slice(-2)`), semi-transparent | dim | walks |
+| Bar hover | unchanged | full opacity | walks |
+| Input focus | 4 lines, full history, scroll | full opacity | **paused** |
+
+### Not done (chat)
+
+Remote display names on Supabase; whispers/friends; diary popup; rate limits; OAuth upgrade path (anonymous → Google).
 
 ---
 
@@ -207,7 +254,8 @@ Registries: `lib/avatarParts.js`. Persisted: `localStorage` key `soresore.appear
 | Feature | Behavior |
 |---------|----------|
 | Gate | First load without saved appearance |
-| Reopen | **Edit look** pill after confirm |
+| Reopen | **Edit look** button — top-right after confirm |
+| Name | Required text field; persisted via `lib/playerIdentity.js`; shown on avatar via `NameTag` |
 | Tabs | Hair / Face / Outfit — style chips + color swatches (8 each for hair/outfit) |
 | Preview | Nested Canvas + ChibiAvatar; drag rotate; pause/resume spin |
 | Camera | Hair/Face → head zoom; Outfit → full body (`PreviewCamera` lerp) |
@@ -271,12 +319,12 @@ walkSurfaceYAt(world, gx, gz)
 
 ## Handoff — continue here
 
-**State (2026-06-12):** Chibi **C3 done** — CharacterCreator UI, hair/outfit color axes, `localStorage`, preview rotate/zoom/pause. Tubbs removed. **Next: D1** OAuth (guest=cat, logged-in=chibi+creator), then **D2** Supabase `appearance`.
+**State (2026-06-19):** Chat **E1 done** — anonymous auth (per-tab), proximity bubbles, `ChatPanel`, name in creator + `NameTag`. Chibi **C3 done**. **Next: D1** OAuth, then **D2** appearance + remote display names.
 
 ### Next (priority order)
 
-1. **D1 — Google OAuth** — `LoginScreen`, `app/auth/callback/route.js`; gate creator to logged-in users.
-2. **D2 — Supabase appearance** — `players.appearance` jsonb; immediate upsert on change; remote chibi looks.
+1. **D1 — Google OAuth** — `LoginScreen`, `app/auth/callback/route.js`; upgrade/link anonymous user; gate creator.
+2. **D2 — Supabase profile** — `players.appearance` jsonb + `display_name`; immediate upsert; remote chibi looks + name tags.
 3. **PR 5b** — decoration collision polish (`canMoveTo` same-cell pass-through, railings).
 4. **PR 8b** — remote cat walk animation; guest emotes.
 
@@ -287,10 +335,12 @@ walkSurfaceYAt(world, gx, gz)
 - **Rail `gz`:** use `worldZToGridGz` (half-cell offset vs integer division).
 - **Collision:** white debug tiles sometimes passable; railings block full grid tiles in Z.
 - **Creator:** not OAuth-gated yet; remotes share local `appearance`.
+- **Chat Html:** bubble/name tag need `width: max-content` — do not remove.
+- **Chat panel:** collapsed log uses `slice(-2)` — do not rely on scroll position when unfocused.
 
 ### Deferred
 
-Surface footsteps by zone; chat/diary UI; second train; station hut re-wire; face UV-paint polish; remote position extrapolation.
+Surface footsteps by zone; diary/friend popups; second train; station hut re-wire; face UV-paint polish; remote position extrapolation.
 
 ---
 

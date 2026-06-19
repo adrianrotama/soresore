@@ -319,9 +319,41 @@ $warm-ambient: #ffd4a0;
   box-shadow: 0 8px 18px rgba(245, 155, 99, 0.5);
   transition: transform 0.12s ease, box-shadow 0.15s ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     transform: translateY(-2px);
     box-shadow: 0 12px 22px rgba(245, 155, 99, 0.6);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.nameField {
+  margin-bottom: 12px;
+}
+
+.nameInput {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: $night;
+  background: rgba(255, 255, 255, 0.88);
+  border: 2px solid rgba(252, 181, 127, 0.45);
+  border-radius: 14px;
+  outline: none;
+  box-shadow: 0 3px 8px rgba(37, 42, 55, 0.1);
+
+  &::placeholder {
+    color: rgba(37, 42, 55, 0.4);
+    font-weight: 500;
+  }
+
+  &:focus {
+    border-color: $sunset-deep;
+    box-shadow: 0 0 0 3px rgba(252, 181, 127, 0.25);
   }
 }
 
@@ -329,7 +361,8 @@ $warm-ambient: #ffd4a0;
 .reopenBtn {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  top: 16px;
+  bottom: auto;
   z-index: 40;
   display: flex;
   align-items: center;

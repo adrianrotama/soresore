@@ -24,6 +24,7 @@ import {
   resolveHairPart,
   resolveOutfitColor,
   resolveOutfitPart,
+  resolveSkinColor,
 } from "@/lib/avatarParts";
 import { createFaceCanvasTexture } from "@/lib/faceCanvasTexture";
 
@@ -68,12 +69,13 @@ function convertMeshToToon(mesh, tint) {
   mesh.material = converted.length === 1 ? converted[0] : converted;
 }
 
-function buildBodyModel(scene, config) {
+function buildBodyModel(scene, config, skinTint) {
   const model = cloneSkinned(scene);
+  const tint = skinTint ?? config.toonTint ?? "#ffffff";
 
   model.traverse((child) => {
     if (!child.isMesh) return;
-    if (config.toon) convertMeshToToon(child, config.toonTint ?? "#ffffff");
+    if (config.toon) convertMeshToToon(child, tint);
   });
 
   model.updateMatrixWorld(true);
@@ -195,11 +197,13 @@ function ChibiAvatarInner({ moving01Ref, appearance = DEFAULT_APPEARANCE }) {
   const faceKey = appearance?.face ?? DEFAULT_APPEARANCE.face;
   const outfitKey = appearance?.outfit ?? DEFAULT_APPEARANCE.outfit;
   const outfitColorKey = appearance?.outfitColor ?? DEFAULT_APPEARANCE.outfitColor;
+  const skinColorKey = appearance?.skinColor ?? DEFAULT_APPEARANCE.skinColor;
   const hairPart = resolveHairPart(hairKey);
   const facePart = resolveFacePart(faceKey);
   const outfitPart = resolveOutfitPart(outfitKey);
   const hairColor = resolveHairColor(hairColorKey);
   const outfitColor = resolveOutfitColor(outfitColorKey);
+  const skinColor = resolveSkinColor(skinColorKey);
 
   const { scene, animations } = useGLTF(config.url);
   const { scene: hairScene } = useGLTF(hairPart.url);
@@ -211,8 +215,8 @@ function ChibiAvatarInner({ moving01Ref, appearance = DEFAULT_APPEARANCE }) {
   const faceRef = useRef(null);
 
   const { model, footY } = useMemo(
-    () => buildBodyModel(scene, config),
-    [scene, config]
+    () => buildBodyModel(scene, config, skinColor),
+    [scene, config, skinColor]
   );
 
   const { actions } = useAnimations(animations, rigRef);
@@ -230,7 +234,7 @@ function ChibiAvatarInner({ moving01Ref, appearance = DEFAULT_APPEARANCE }) {
 
   useEffect(() => {
     animStarted.current = false;
-  }, [hairKey, hairColorKey, faceKey, outfitKey, outfitColorKey]);
+  }, [hairKey, hairColorKey, faceKey, skinColorKey, outfitKey, outfitColorKey]);
 
   useEffect(() => {
     const rig = rigRef.current;
@@ -391,10 +395,11 @@ export default function ChibiAvatar({ moving01Ref, appearance }) {
   const faceKey = appearance?.face ?? DEFAULT_APPEARANCE.face;
   const outfitKey = appearance?.outfit ?? DEFAULT_APPEARANCE.outfit;
   const outfitColorKey = appearance?.outfitColor ?? DEFAULT_APPEARANCE.outfitColor;
+  const skinColorKey = appearance?.skinColor ?? DEFAULT_APPEARANCE.skinColor;
   return (
     <Suspense fallback={null}>
       <ChibiAvatarInner
-        key={`${hairKey}-${hairColorKey}-${faceKey}-${outfitKey}-${outfitColorKey}`}
+        key={`${hairKey}-${hairColorKey}-${faceKey}-${skinColorKey}-${outfitKey}-${outfitColorKey}`}
         moving01Ref={moving01Ref}
         appearance={appearance}
       />

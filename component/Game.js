@@ -11,6 +11,7 @@ import Environment from "@/component/Environment";
 import World from "@/component/World";
 import GameAudio from "@/component/GameAudio";
 import CharacterCreator from "@/component/CharacterCreator";
+import ChatPanel from "@/component/ChatPanel";
 import { TEST_WORLD } from "@/lib/testWorld";
 import { TILE_LEVEL_HEIGHT } from "@/lib/world";
 import { DEFAULT_PLAYER_CAT } from "@/lib/playerModels";
@@ -30,6 +31,12 @@ import {
   loadAppearance,
   saveAppearance,
 } from "@/lib/appearanceStorage";
+import { ensureAnonymousSession, setDisplayName as persistDisplayName } from "@/lib/playerIdentity";
+import {
+  getActiveBubbleMessage,
+  messageFromRow,
+  senderLabel,
+} from "@/lib/chat";
 import creatorStyles from "@/component/CharacterCreator.module.scss";
 
 const IS_DEV = process.env.NODE_ENV === "development";
@@ -69,9 +76,13 @@ function pruneStalePlayers(players) {
 }
 
 export default function Game() {
-  const playerId = useMemo(() => crypto.randomUUID(), []);
-  const guestPalette = useMemo(() => paletteFromSeed(playerId), [playerId]);
-  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 16 }
+  const [playerId, setPlayerId] = useState(null);
+  const [displayName, setDisplayName] = useState("");
+  const guestPalette = useMemo(
+    () => (playerId ? paletteFromSeed(playerId) : null),
+    [playerId]
+  );
+  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 16 };
   const myPositionRef = useRef(spawn);
   /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);
@@ -82,13 +93,38 @@ export default function Game() {
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [hasCreated, setHasCreated] = useState(false);
   /** Dev only: `2` cycles GUEST_CAT_PRESETS for local cat color tuning. */
-  const [devPresetIndex, setDevPresetIndex] = useState(() =>
-    presetIndexFromSeed(playerId)
-  );
+  const [devPresetIndex, setDevPresetIndex] = useState(0);
+  const [messages, setMessages] = useState([]);
+  /** Re-render bubble proximity / TTL on a timer. */
+  const [bubbleTick, setBubbleTick] = useState(0);
+  /** Freeze movement while the chat input is focused. */
+  const [chatFocused, setChatFocused] = useState(false);
   const catModel = DEFAULT_PLAYER_CAT;
   const localGuestPalette = IS_DEV
     ? GUEST_CAT_PRESETS[devPresetIndex]
     : guestPalette;
+
+  // Anonymous auth — one session per tab (sessionStorage in lib/supabase.js).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initAuth() {
+      try {
+        const session = await ensureAnonymousSession();
+        if (cancelled) return;
+        setPlayerId(session.userId);
+        setDisplayName(session.displayName);
+        setDevPresetIndex(presetIndexFromSeed(session.userId));
+      } catch (err) {
+        console.error("[Game] anonymous auth failed:", err);
+      }
+    }
+
+    initAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Hydrate saved look on mount; first-time visitors get the creator as a gate.
   // NOTE (Phase D1): gate this behind an OAuth login — guests stay cats; only
@@ -105,15 +141,72 @@ export default function Game() {
     }
   }, []);
 
-  function handleConfirmAppearance(next) {
+  function handleConfirmAppearance(next, name) {
     setAppearance(next);
     setAvatarKind("chibi");
     saveAppearance(next);
+    const trimmed = name?.trim();
+    if (trimmed) {
+      persistDisplayName(trimmed);
+      setDisplayName(trimmed);
+    }
     setHasCreated(true);
     setCreatorOpen(false);
   }
   // Network-authoritative positions from Supabase (not rendered directly).
   const [players, setPlayers] = useState({});
+
+  // Refresh bubble proximity + expiry while messages are active.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setBubbleTick((tick) => tick + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!playerId) return;
+
+    async function loadMessages() {
+      const { data } = await supabase
+        .from("messages")
+        .select("id, sender_id, body, created_at")
+        .order("created_at", { ascending: true })
+        .limit(50);
+
+      if (data) setMessages(data.map(messageFromRow));
+    }
+
+    loadMessages();
+
+    const channel = supabase
+      .channel("chat-room")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          const message = messageFromRow(payload.new);
+          setMessages((prev) => {
+            if (prev.some((entry) => entry.id === message.id)) return prev;
+            return [...prev, message];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [playerId]);
+
+  async function handleSendMessage(body) {
+    if (!playerId) return;
+    const { error } = await supabase.from("messages").insert({
+      sender_id: playerId,
+      body,
+    });
+    if (error) console.error("[Game] send message failed:", error);
+  }
 
   useEffect(() => {
     if (!IS_DEV) return;
@@ -235,9 +328,11 @@ export default function Game() {
   }, []);
 
 
-  // Update player position to Supabase every SYNC_MS
+  // Upsert position on join, then every SYNC_MS.
   useEffect(() => {
-    const interval = setInterval(async () => {
+    if (!playerId) return;
+
+    async function upsertPosition() {
       const { x, y, z } = myPositionRef.current;
       await supabase.from("players").upsert({
         id: playerId,
@@ -246,14 +341,36 @@ export default function Game() {
         z,
         last_seen: new Date().toISOString(),
       });
-    }, SYNC_MS);
+    }
 
+    upsertPosition();
+    const interval = setInterval(upsertPosition, SYNC_MS);
     return () => clearInterval(interval);
   }, [playerId]);
 
   const remotePlayers = Object.entries(players).filter(
     ([id, player]) => id !== playerId && !isPlayerStale(player.last_seen)
   );
+
+  const myPos = myPositionRef.current;
+  void bubbleTick;
+
+  function bubbleTextFor(senderId) {
+    const senderPos =
+      senderId === playerId
+        ? myPos
+        : players[senderId]
+          ? {
+              x: players[senderId].x,
+              y: players[senderId].y,
+              z: players[senderId].z,
+            }
+          : null;
+
+    return getActiveBubbleMessage(messages, senderId, myPos, senderPos)?.body ?? null;
+  }
+
+  const localBubbleText = playerId ? bubbleTextFor(playerId) : null;
 
   return (
     <>
@@ -310,7 +427,9 @@ export default function Game() {
           appearance={appearance}
           catModel={catModel}
           guestPalette={catModel === "quaternius" ? localGuestPalette : null}
-          paused={creatorOpen}
+          paused={creatorOpen || chatFocused}
+          chatBubbleText={localBubbleText}
+          nameTagText={displayName || null}
         />
 
         {remotePlayers.map(([id, networkPosition]) => (
@@ -321,6 +440,8 @@ export default function Game() {
             avatarKind={avatarKind}
             appearance={appearance}
             catModel={catModel}
+            chatBubbleText={bubbleTextFor(id)}
+            nameTagText={senderLabel(id, playerId, displayName)}
           />
         ))}
       </Canvas>
@@ -335,9 +456,21 @@ export default function Game() {
         </button>
       )}
 
+      {hasCreated && !creatorOpen && (
+        <ChatPanel
+          messages={messages}
+          playerId={playerId}
+          displayName={displayName}
+          onSend={handleSendMessage}
+          onTypingChange={setChatFocused}
+          ready={Boolean(playerId)}
+        />
+      )}
+
       <CharacterCreator
         open={creatorOpen}
         appearance={appearance}
+        displayName={displayName}
         canClose={hasCreated}
         onConfirm={handleConfirmAppearance}
         onClose={() => setCreatorOpen(false)}
