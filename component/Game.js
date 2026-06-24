@@ -31,6 +31,7 @@ import {
 import {
   hasCreatedCharacter,
   loadAppearance,
+  normalizeAppearance,
   saveAppearance,
 } from "@/lib/appearanceStorage";
 import {
@@ -40,6 +41,7 @@ import {
   getAuthState,
   getDisplayName,
   getPlayerProfile,
+  savePlayerAppearance,
   setDisplayName as persistDisplayName,
   signInAsGuest,
   signInWithGoogle,
@@ -48,15 +50,14 @@ import {
   appendMessage,
   getActiveBubbleMessage,
   messageFromRow,
-  MESSAGE_HISTORY_MAX,
   senderLabel,
 } from "@/lib/chat";
 import creatorStyles from "@/component/CharacterCreator.module.scss";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
-// Intentionally 50s — limits Supabase writes; do not lower without user approval (GAME.md).
-const SYNC_MS = 50000;
+// User-approved retune for smoother multiplayer movement.
+const SYNC_MS = 200;
 // Drop players who haven't heartbeated within this window (should be > SYNC_MS).
 const STALE_MS = 15_000;
 const PRUNE_MS = 2000;
@@ -71,8 +72,10 @@ function playerFromRow(row) {
     x: row.x,
     y: row.y,
     z: row.z,
+    ry: row.ry ?? 0,
     last_seen: row.last_seen,
     display_name: row.display_name ?? null,
+    appearance: row.appearance ?? null,
   };
 }
 
@@ -98,7 +101,7 @@ export default function Game() {
     () => (playerId ? paletteFromSeed(playerId) : null),
     [playerId]
   );
-  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 16 };
+  const spawn = { x: 0, y: TILE_LEVEL_HEIGHT + 0.5, z: 16, ry: 0 };
   const myPositionRef = useRef(spawn);
   /** Dev only: ` / F2 toggles fixed follow cam (legacy) vs default orbit. */
   const [useLegacyFollow, setUseLegacyFollow] = useState(false);
@@ -172,17 +175,32 @@ export default function Game() {
         setDisplayName(serverName);
         persistDisplayName(serverName);
 
+        const serverAppearance = profile?.appearance ?? null;
+        if (serverAppearance) {
+          const normalized = normalizeAppearance(serverAppearance);
+          setAppearance(normalized);
+          saveAppearance(normalized);
+          setHasCreated(true);
+          setAvatarKind("chibi");
+          setPhase("playing");
+          return;
+        }
+
         const saved = loadAppearance();
         setAppearance(saved);
         if (hasCreatedCharacter()) {
           setHasCreated(true);
           setAvatarKind("chibi");
           setPhase("playing");
-        } else {
-          setAvatarKind("chibi");
-          setCreatorOpen(true);
-          setPhase("creator");
+          savePlayerAppearance(auth.userId, saved).catch((appearanceErr) => {
+            console.warn("[Game] failed to backfill appearance:", appearanceErr);
+          });
+          return;
         }
+
+        setAvatarKind("chibi");
+        setCreatorOpen(true);
+        setPhase("creator");
       } catch (err) {
         console.error("[Game] init failed:", err);
         if (cancelled) return;
@@ -241,13 +259,20 @@ export default function Game() {
     return null;
   }
 
-  function handleConfirmAppearance(next) {
+  async function handleConfirmAppearance(next) {
     setAppearance(next);
     setAvatarKind("chibi");
     saveAppearance(next);
     setHasCreated(true);
     setCreatorOpen(false);
     setPhase("playing");
+
+    if (!playerId) return;
+    try {
+      await savePlayerAppearance(playerId, next);
+    } catch (appearanceErr) {
+      console.warn("[Game] failed to save appearance:", appearanceErr);
+    }
   }
 
   // Network-authoritative positions from Supabase (not rendered directly).
@@ -263,19 +288,7 @@ export default function Game() {
   useEffect(() => {
     if (!playerId || !isPlaying) return;
 
-    async function loadMessages() {
-      const { data } = await supabase
-        .from("messages")
-        .select("id, sender_id, body, created_at")
-        .order("created_at", { ascending: false })
-        .limit(MESSAGE_HISTORY_MAX);
-
-      if (data) {
-        setMessages(data.reverse().map(messageFromRow));
-      }
-    }
-
-    loadMessages();
+    setMessages([]);
 
     const channel = supabase
       .channel("chat-room")
@@ -370,7 +383,7 @@ export default function Game() {
     async function loadPlayers() {
       const { data } = await supabase
         .from("players")
-        .select("id, x, y, z, last_seen, display_name");
+        .select("id, x, y, z, ry, last_seen, display_name, appearance");
 
       if (!data) return;
 
@@ -426,12 +439,13 @@ export default function Game() {
     if (!playerId || !isPlaying) return;
 
     async function upsertPosition() {
-      const { x, y, z } = myPositionRef.current;
+      const { x, y, z, ry } = myPositionRef.current;
       await supabase.from("players").upsert({
         id: playerId,
         x,
         y,
         z,
+        ry: Number.isFinite(ry) ? ry : 0,
         last_seen: new Date().toISOString(),
       });
     }
@@ -557,12 +571,20 @@ export default function Game() {
           />
 
           {remotePlayers.map(([id, networkPosition]) => (
+            (() => {
+              const remoteHasAppearance = Boolean(networkPosition.appearance);
+              const remoteAvatarKind = remoteHasAppearance ? "chibi" : "cat";
+              const remoteAppearance = remoteHasAppearance
+                ? normalizeAppearance(networkPosition.appearance)
+                : DEFAULT_APPEARANCE;
+
+              return (
             <RemotePlayer
               key={id}
               playerId={id}
               networkPosition={networkPosition}
-              avatarKind="cat"
-              appearance={appearance}
+              avatarKind={remoteAvatarKind}
+              appearance={remoteAppearance}
               catModel={catModel}
               chatBubbleText={bubbleTextFor(id)}
               nameTagText={senderLabel(
@@ -572,6 +594,8 @@ export default function Game() {
                 networkPosition.display_name
               )}
             />
+              );
+            })()
           ))}
         </Canvas>
       )}

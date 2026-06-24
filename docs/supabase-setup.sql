@@ -16,9 +16,10 @@ CREATE TABLE IF NOT EXISTS public.players (
   x double precision NOT NULL DEFAULT 0,
   y double precision NOT NULL DEFAULT 1.5,
   z double precision NOT NULL DEFAULT 16,
+  ry double precision NOT NULL DEFAULT 0,
   last_seen timestamptz NOT NULL DEFAULT now(),
-  display_name text
-  -- D2 (not yet in app): appearance jsonb
+  display_name text,
+  appearance jsonb
 );
 
 CREATE TABLE IF NOT EXISTS public.messages (
@@ -105,3 +106,13 @@ CREATE POLICY "messages_insert_own"
 -- Or run (if publication exists):
 --   ALTER PUBLICATION supabase_realtime ADD TABLE public.players;
 --   ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+
+-- -----------------------------------------------------------------------------
+-- 5. Migration helpers (for existing projects)
+-- -----------------------------------------------------------------------------
+
+ALTER TABLE public.players
+  ADD COLUMN IF NOT EXISTS appearance jsonb;
+
+ALTER TABLE public.players
+  ADD COLUMN IF NOT EXISTS ry double precision NOT NULL DEFAULT 0;

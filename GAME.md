@@ -5,7 +5,7 @@
 ### Doc maintenance (agents)
 
 - **Do not edit during normal work.** Update `GAME.md` only when the user explicitly asks (typically end-of-day handoff). Tuned numbers live in code (`lib/trainRoute.js`, `lib/tileModels.js`, `component/Decoration.js`, etc.).
-- **Do not “fix” `SYNC_MS` in `Game.js`.** It is intentionally `50000` (50s) to limit Supabase writes while prototyping.
+- **Do not change `SYNC_MS` casually.** Currently `200` ms (user-approved retune, 2026-06-24). Position heartbeat only — appearance and chat use immediate paths.
 
 ### Project rules (read before extending)
 
@@ -19,7 +19,7 @@
 - **Foot-snap in `useMemo`** (`EnvironmentModel`, `TileModel`) — **not** `useLayoutEffect` (caused one-frame ~1 m drop).
 - **Train route Y** uses `TILE_LEVEL_HEIGHT` in `start[1]` / `end[1]` — don't hardcode `y = 0`.
 
-Browser multiplayer 3D prototype. **One tab = one player** via Supabase auth (`sessionStorage` — tabs stay isolated). **Guests** = ephemeral anonymous cat (refresh → login). **Google** = chibi + creator. Positions + chat sync via **Supabase Realtime**. **D1 OAuth done**; **D2** appearance sync pending.
+Browser multiplayer 3D prototype. **One tab = one player** via Supabase auth (`sessionStorage` — tabs stay isolated). **Guests** = ephemeral anonymous cat (refresh → login). **Google** = chibi + creator. Position, yaw, appearance + chat sync via **Supabase Realtime**. **D1 OAuth** + **D2 appearance** done.
 
 ---
 
@@ -53,7 +53,7 @@ component/Landmark.js       → world structure registry (LANDMARK_COMPONENTS)
 component/TrainConsist.js   → 3-car train, snake enter/exit, opacity fade
 component/StationRailProps.js → train landmark wrapper
 component/LocalPlayer.js    → input, movement, bob/squash, footsteps; PlayerAvatar | ChibiAvatar
-component/RemotePlayer.js     → network vs visual position
+component/RemotePlayer.js     → network vs visual position + yaw; remote walk blend
 component/PlayerAvatar.js   → guest Quaternius cat, Idle/Walk
 component/ChibiAvatar.js      → body + hair + skinned outfit + face decal
 component/CharacterCreator.js → avatar customizer overlay (3D preview, tabs; appearance only)
@@ -88,7 +88,7 @@ lib/environmentModels.js      → ENV_REGISTRY (url + collision per kind)
 lib/interpolation.js          → lerpPosition (remotes)
 lib/gameAudio.js              → ambience + footstep ticks
 lib/supabase.js               → Supabase client; sessionStorage per tab; flowType pkce
-lib/playerIdentity.js         → auth (guest/Google), finishAuthFromUrl, claimDisplayName, profiles
+lib/playerIdentity.js         → auth (guest/Google), finishAuthFromUrl, claimDisplayName, savePlayerAppearance, profiles
 lib/chat.js                   → CHAT_RADIUS, BUBBLE_TTL_MS, proximity helpers, senderLabel
 ```
 
@@ -98,10 +98,10 @@ lib/chat.js                   → CHAT_RADIUS, BUBBLE_TTL_MS, proximity helpers,
 
 ```
 playerId = auth.uid()  (guest anonymous OR Google — lib/playerIdentity.js)
-LocalPlayer → positionRef (every frame)
-Game → upsert on join + every SYNC_MS (position only — does not overwrite display_name)
-Game → players state from select + realtime postgres_changes (incl. display_name)
-RemotePlayer → lerps visual toward network target; avatarKind hardcoded cat until D2
+LocalPlayer → positionRef { x, y, z, ry } (every frame)
+Game → upsert on join + every SYNC_MS (x, y, z, ry, last_seen only — does not overwrite display_name or appearance)
+Game → players state from select + realtime postgres_changes (incl. display_name, appearance, ry)
+RemotePlayer → lerps visual toward network target; chibi when row has appearance, else guest cat
 Stale players pruned via last_seen (no DELETE)
 ```
 
@@ -119,7 +119,7 @@ Stale players pruned via last_seen (no DELETE)
 - **Guest:** `signInAsGuest()` → play as cat; **refresh signs out** → login again (ephemeral).
 - **Google:** `signInWithOAuth` → `/auth/callback` → `finishAuthFromUrl()` (handles `#access_token` hash **and** `?code=` PKCE).
 - **Name:** `claimDisplayName()` upserts `players.display_name`; case-insensitive unique index; not editable after claim.
-- **Appearance:** still `localStorage` only — **D2** will add `players.appearance` jsonb.
+- **Appearance:** `players.appearance` jsonb (server) + `localStorage` cache (`soresore.appearance`). Immediate upsert on creator confirm / Edit look via `savePlayerAppearance()`. Init: server first; backfill from localStorage if server null.
 
 ### Supabase `players` table
 
@@ -127,8 +127,10 @@ Stale players pruned via last_seen (no DELETE)
 |--------|--------|
 | `id` | uuid PK = `auth.uid()` |
 | `x`, `y`, `z` | World position; spawn `y: TILE_LEVEL_HEIGHT + 0.5` |
+| `ry` | Yaw radians (mesh `rotation.y`); default 0 |
 | `last_seen` | Heartbeat |
 | `display_name` | text, unique (lower trim), 2–24 chars; logged-in only |
+| `appearance` | jsonb — chibi look; guests leave null |
 
 Realtime on `players`. RLS: `authenticated` SELECT all rows; INSERT/UPDATE own row only. Channel `players-room`.
 
@@ -136,17 +138,17 @@ Realtime on `players`. RLS: `authenticated` SELECT all rows; INSERT/UPDATE own r
 
 | Constant | Value | Role |
 |----------|-------|------|
-| `SYNC_MS` | **50000** | Upsert interval — intentional; do not lower without approval |
+| `SYNC_MS` | **200** | Position + yaw upsert interval (~5/s per player) |
 | `STALE_MS` | 15000 | Drop stale remotes |
 | `PRUNE_MS` | 2000 | Prune sweep |
 
-**Note:** `SYNC_MS` > `STALE_MS` today — remotes may prune quickly until timing is retuned together.
+`STALE_MS` (15s) >> `SYNC_MS` (200ms) — remotes should not prune while actively heartbeating.
 
 ---
 
 ## Local player (`LocalPlayer.js`)
 
-**State:** `positionRef` in `Game.js` (mutable). Mesh in `useFrame`.
+**State:** `positionRef` in `Game.js` (mutable `{ x, y, z, ry }`). Mesh in `useFrame`. `ry` published each frame for Supabase heartbeat.
 
 **Movement:** camera-relative WASD → velocity with separate accel/decel. `canMoveTo` with axis slide before applying XZ.
 
@@ -177,7 +179,7 @@ Realtime on `players`. RLS: `authenticated` SELECT all rows; INSERT/UPDATE own r
 | `body` | text, max 140 chars |
 | `created_at` | timestamptz |
 
-RLS: authenticated SELECT all; INSERT own row only. Realtime channel `chat-room` (INSERT events). **Chat sends are immediate** — not tied to `SYNC_MS`.
+RLS: authenticated SELECT all; INSERT own row only. Realtime channel `chat-room` (INSERT events). **Chat sends are immediate** — not tied to `SYNC_MS`. **No initial history fetch** — each playing session starts with empty client log; only realtime INSERTs append.
 
 ### Proximity bubbles
 
@@ -207,10 +209,13 @@ Whispers/friends; diary popup; rate limits.
 |-----|---------|
 | `networkTarget` | Latest Supabase position |
 | `visualPosition` | Lerped render position |
+| `targetYaw` / `visualYaw` | Network `ry` vs smoothed render yaw |
 
 Never bind mesh directly to `Game.js` `players` state.
 
-**Not done:** remote walk blend; extrapolation; networked appearance (**D2** — remotes render as cat today).
+**Avatar:** `appearance` jsonb on row → `ChibiAvatar`; else `PlayerAvatar` cat with `paletteFromSeed(playerId)`. **Walk blend:** `moving01Ref` from lerped visual velocity (cat + chibi).
+
+**Not done:** extrapolation; remote stair pitch lean.
 
 ---
 
@@ -263,33 +268,29 @@ Body Y rotation `Math.PI` in `avatarModels.js` for movement forward.
 ### `appearance`
 
 ```js
-{ hair, hairColor, face, outfit, outfitColor }
+{ hair, hairColor, face, skinColor, outfit, outfitColor }
 ```
 
-Registries: `lib/avatarParts.js`. Persisted: `localStorage` key `soresore.appearance` via `lib/appearanceStorage.js`.
+Registries: `lib/avatarParts.js`. Persisted: `players.appearance` (server) + `localStorage` key `soresore.appearance` via `lib/appearanceStorage.js` (cache). `normalizeAppearance()` is the validation source of truth.
 
 ### Character creator (`CharacterCreator.js`)
 
 | Feature | Behavior |
 |---------|----------|
-| Gate | Logged-in user without `localStorage` appearance |
+| Gate | Logged-in user without server or `localStorage` appearance |
 | Reopen | **Edit look** — appearance only; name locked |
 | Name | **Not here** — `NameModal` before creator (one-time, server unique) |
 | Tabs | Hair / Face / Outfit — style chips + color swatches (8 each for hair/outfit) |
 | Preview | Nested Canvas + ChibiAvatar; drag rotate; pause/resume spin |
 | Camera | Hair/Face → head zoom; Outfit → full body (`PreviewCamera` lerp) |
 | Facing | `PREVIEW_FACING_YAW = Math.PI` offsets body rotation so preview faces camera |
-| Confirm | Saves appearance to `localStorage`, `avatarKind = "chibi"`, unpauses world |
+| Confirm | Saves to `localStorage` + `savePlayerAppearance()`, `avatarKind = "chibi"`, unpauses world |
 
 **Dev keys:** `4` cat↔chibi, `5` face, `6` hair style, `7` outfit style.
 
 ### Next (avatar)
 
-| ID | Task |
-|----|------|
-| **D2** | `players.appearance` jsonb + immediate upsert; remote chibi looks + walk blend |
-
-New hair/shirt GLBs: `docs/blender-avatar.md`.
+Guest emotes; new hair/shirt GLBs (`docs/blender-avatar.md`).
 
 ---
 
@@ -337,14 +338,13 @@ walkSurfaceYAt(world, gx, gz)
 
 ## Handoff — continue here
 
-**State (2026-06-19):** **D1 done** — `LoginScreen`, `NameModal`, Google OAuth + callback (hash + PKCE), guest ephemeral sessions, `players.display_name` unique, consolidated RLS, remote name tags. Chat **E1** + Chibi **C3** unchanged. **Remotes still render as cat** until D2. **Next: D2** appearance jsonb + immediate upsert.
+**State (2026-06-24):** **D2 done** — `players.appearance` jsonb + `savePlayerAppearance()`; remote chibi looks + walk blend; `players.ry` yaw sync; `SYNC_MS = 200`. Chat: fresh session (no DB history on join). Existing projects: run migration helpers in `docs/supabase-setup.sql` (`appearance`, `ry` columns).
 
 ### Next (priority order)
 
-1. **D2 — Supabase profile** — `players.appearance` jsonb; immediate upsert on creator confirm/edit; `RemotePlayer` reads server look; guest stays cat.
-2. **PR 5b** — decoration collision polish (`canMoveTo` same-cell pass-through, railings).
-3. **PR 8b** — remote cat walk animation; guest emotes.
-4. **Timing** — retune `STALE_MS` > `SYNC_MS` together when ready (remotes prune quickly today).
+1. **PR 5b** — decoration collision polish (`canMoveTo` same-cell pass-through, railings).
+2. **PR 8b** — guest emotes; remote stair pitch lean (optional polish).
+3. **Realtime efficiency** — if free-tier message quota bites, consider Broadcast for position or adaptive sync when idle.
 
 ### Open bugs / traps
 
@@ -354,9 +354,10 @@ walkSurfaceYAt(world, gx, gz)
 - **Collision:** white debug tiles sometimes passable; railings block full grid tiles in Z.
 - **OAuth callback:** Supabase may return `#access_token=` hash — `finishAuthFromUrl()` handles both hash and `?code=`.
 - **Guest refresh:** always returns to login (intentional); clears anonymous session on load.
-- **RemotePlayer:** `avatarKind="cat"` hardcoded in `Game.js` until D2.
+- **Position upsert:** only `{ id, x, y, z, ry, last_seen }` — never include `display_name` or `appearance`.
 - **Chat Html:** bubble/name tag need `width: max-content` — do not remove.
 - **Chat panel:** collapsed log uses `slice(-2)` — do not rely on scroll position when unfocused.
+- **eslint:** `react-hooks/refs`, `immutability`, `set-state-in-effect` off in `eslint.config.mjs` for r3f `useFrame` patterns.
 
 ### Deferred
 

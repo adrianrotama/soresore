@@ -343,6 +343,9 @@ export default function LocalPlayer({
       }
       mesh.rotation.y += step;
     }
+
+    // Publish yaw for networking (Supabase heartbeat reads from positionRef).
+    positionRef.current.ry = mesh.rotation.y;
   });
 
   const { x, y, z } = positionRef.current;
