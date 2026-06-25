@@ -4,6 +4,7 @@ import { Fragment, Suspense } from "react";
 import { useGLTF } from "@react-three/drei";
 import TileModel from "@/component/TileModel";
 import StairTile from "@/component/StairTile";
+import SlopeTile from "@/component/SlopeTile";
 import { gridToWorld } from "@/lib/tileGrid";
 import {
   PEDESTAL_TILE_URL,
@@ -15,7 +16,13 @@ import {
   tileModelYOffset,
   tileUsesNativeColor,
 } from "@/lib/tileModels";
-import { normalizeCell, TILE_LEVEL_HEIGHT } from "@/lib/world";
+import {
+  normalizeCell,
+  slopeMeshWorldOffset,
+  slopeRiseOf,
+  slopeSpanOf,
+  TILE_LEVEL_HEIGHT,
+} from "@/lib/world";
 
 useGLTF.preload(PEDESTAL_TILE_URL);
 useGLTF.preload(BRICK_TILE_URL);
@@ -53,7 +60,10 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
           const yOffset = tileModelYOffset(cell.type);
           const meshY = y + yOffset;
           const key = `${gx}-${gz}-${cell.type}-${cell.level}-${cell.rotation ?? 0}`;
-          const palette = paletteFor(cell.type);
+          const palette =
+            cell.type === "slope"
+              ? paletteFor(cell.surfaceType ?? DEFAULT_TILE_KEY)
+              : paletteFor(cell.type);
 
           // Bank: solid cliff plug from `bankBottomLevel` up to the tile's base.
           // Skip when the mesh already extends below the cell base (e.g. 2 m brick).
@@ -65,7 +75,7 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
             baseY + ((bankBottomLevel + bankTopLevel) / 2) * TILE_LEVEL_HEIGHT;
 
           const bank =
-            yOffset === 0 && cell.type !== "water" ? (
+            yOffset === 0 && cell.type !== "water" && cell.type !== "slope" ? (
               <TileBank
                 color={palette.side}
                 position={[wx, bankY, wz]}
@@ -83,6 +93,20 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
                   rotation={cell.rotation}
                 />
               </Fragment>
+            );
+          }
+          if (cell.type === "slope") {
+            if (cell.slopePart !== 0) return null;
+            const meshOff = slopeMeshWorldOffset(cell);
+            return (
+              <SlopeTile
+                key={key}
+                palette={palette}
+                position={[wx + meshOff.x, y, wz + meshOff.z]}
+                rotation={cell.rotation}
+                span={slopeSpanOf(cell)}
+                rise={slopeRiseOf(cell)}
+              />
             );
           }
 

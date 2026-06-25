@@ -7,6 +7,8 @@ import {
   canMoveTo,
   getCell,
   stairProgress01,
+  slopeProgress01,
+  slopeHeightIndex,
   walkSurfaceYAt,
   TILE_LEVEL_HEIGHT,
   worldToGrid,
@@ -262,17 +264,26 @@ export default function LocalPlayer({
     // Phase 4: Ground-snap (smoothed). Converts world XZ -> grid coords and
     // lerps Y toward walkSurfaceYAt + foot offset. For stairs, walkSurfaceYAt matches
     // the upper landing (good enough for now; slope interpolation is later).
+    let isOnSlope = false;
     if (world?.map && world?.origin) {
       const { gx, gz } = worldToGrid(world, pos.x, pos.z);
       const cell = getCell(world, gx, gz);
       stairCell = cell?.type === "stair" ? cell : null;
-      stairRot = stairCell?.rotation ?? 0;
-      stairProgress = stairCell ? stairProgress01(stairCell, gx, gz) : 0;
+      const slopeCell = cell?.type === "slope" ? cell : null;
+      isOnSlope = Boolean(slopeCell);
+      stairRot = (stairCell ?? slopeCell)?.rotation ?? 0;
+      stairProgress = stairCell
+        ? stairProgress01(stairCell, gx, gz)
+        : slopeCell
+          ? slopeProgress01(slopeCell, gx, gz)
+          : 0;
       const surfaceY =
         cell?.type === "stair"
           ? // Stair `level` is the BASE; tile rises from level*H (low end)
             // up to (level+1)*H (high end). E.g. STAIR_L1 (level 0) → 0..1 m.
             (cell.level + stairProgress) * TILE_LEVEL_HEIGHT
+          : cell?.type === "slope"
+            ? slopeHeightIndex(slopeCell, gx, gz) * TILE_LEVEL_HEIGHT
           : walkSurfaceYAt(world, gx, gz);
       const targetY = surfaceY + PLAYER_FOOT_OFFSET;
       pos.y += (targetY - pos.y) * smoothRate(GROUND_SNAP_RATE, delta);
@@ -287,7 +298,7 @@ export default function LocalPlayer({
     if (mesh.rotation.order !== "YXZ") mesh.rotation.order = "YXZ";
 
     let targetPitch = 0;
-    if (stairCell) {
+    if (stairCell || isOnSlope) {
       // Slope-up direction in world XZ (stair at rot=0 climbs toward +Z).
       const upX = Math.sin(stairRot);
       const upZ = Math.cos(stairRot);

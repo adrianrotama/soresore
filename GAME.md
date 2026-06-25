@@ -11,7 +11,7 @@
 
 - **Cozy direction wins (`AGENTS.md`).** ACNH-inspired pedestal silhouette, sunset palette, stable camera. Challenge requests that hurt comfort or cozy feel.
 - **Tile pedestal is the world unit anchor.** `TILE_SIZE = 2` m XZ; `TILE_LEVEL_HEIGHT = 1.0` m Y; mesh footprint **2.082 m**. Scale assets to the grid, not the reverse.
-- **One pedestal GLB; palette via vertex-color repaint** (`TileModel`). New tile **type** → `TILE_PALETTES`. New tile **shape** (water, brick, slope) → `TILE_MODEL_URLS` in `lib/tileModels.js`.
+- **One pedestal GLB; palette via vertex-color repaint** (`TileModel`). New tile **type** → `TILE_PALETTES`. New tile **shape** (water, brick) → `TILE_MODEL_URLS` in `lib/tileModels.js`. **Slope** = procedural wedge (`SlopeTile.js`), not a GLB yet.
 - **Default tiles: no PBR.** `MeshToonMaterial` + vertex colors. Exception: `TILE_NATIVE_COLOR` types keep authored GLB colors (still toon).
 - **Ground Y:** `surfaceYAt` = tile top (decorations). `walkSurfaceYAt` = player snap (+ `cell.surfaceYOffset`). Never hard-code Y for tile content.
 - **Decoration vs Landmark.** Grid props → `Decoration.js` (`{ kind, gx, gz }`). World structures → `Landmark.js` (`{ kind, … }`).
@@ -48,6 +48,7 @@ component/World.js          → TileMap + Decoration[] + Landmark[]; dev Collisi
 component/TileMap.js        → 2D map → <TileModel>; cliff TileBank
 component/TileModel.js      → tile GLB; palette repaint or nativeColor; foot-snap in useMemo
 component/StairTile.js      → procedural 4-step stair
+component/SlopeTile.js    → procedural multi-tile wedge ramp
 component/Decoration.js     → grid prop registry (PROP_COMPONENTS)
 component/Landmark.js       → world structure registry (LANDMARK_COMPONENTS)
 component/TrainConsist.js   → 3-car train, snake enter/exit, opacity fade
@@ -77,8 +78,8 @@ lib/faceCanvasTexture.js      → procedural face texture
 lib/playerModels.js           → guest cat registry (Quaternius only)
 lib/guestCatPalette.js        → GUEST_CAT_PRESETS, paletteFromSeed
 lib/quaterniusRecolor.js      → UV zone vertex recolor
-lib/world.js                  → surfaceYAt, walkSurfaceYAt, canMoveTo, cellSurfaceWorld
-lib/decorationCollision.js    → grid footprints, buildDecorationBlockedSet
+lib/world.js                  → surfaceYAt, walkSurfaceYAt, canMoveTo, slopeHeightIndex
+lib/decorationCollision.js    → world-space OBB collision volumes (meters)
 lib/tileGrid.js               → TILE_SIZE, gridToWorld, worldZToGridGz
 lib/tileModels.js             → TILE_PALETTES, TILE_MODEL_URLS, offsets
 lib/testTileMap.js            → 30×46 map layout
@@ -225,7 +226,7 @@ Never bind mesh directly to `Game.js` `players` state.
 
 **Dev:** `` ` `` / F2 → `FollowCamera` (legacy fixed offset). No sinus sway (`AGENTS.md`).
 
-Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}`.
+Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}`. `shadows={{ type: THREE.PCFShadowMap }}` (not `PCFSoftShadowMap` — deprecated in r184).
 
 ---
 
@@ -311,14 +312,29 @@ walkSurfaceYAt(world, gx, gz)
 - Decorations / `cellSurfaceWorld` → `surfaceYAt` only.
 - `LocalPlayer` ground-snap → `walkSurfaceYAt` + `PLAYER_FOOT_OFFSET`.
 - Cell: `{ type, level?, rotation?, walkable?, surfaceYOffset? }`.
+- **Slope cells** add: `slopePart` (0 = low end), `slopeSpan` (tiles in run, default 3), `slopeRise` (level steps climbed, default 1), `surfaceType` (palette key, e.g. `"grass"`).
 
 ### Tile system
 
 - Standard pedestal: 2.082 × 2.082 × 1.0 m, vertex-color repaint via `TILE_PALETTES`.
 - **brick** / **water**: dedicated GLBs, `TILE_NATIVE_COLOR`, Y offsets in `tileModels.js`. Water non-walkable.
-- **TileBank**: cliff plug under cells; skipped for water and offset types.
-- **StairTile**: procedural 4-step; `surfaceYAt` returns upper landing.
+- **TileBank**: cliff plug under cells; skipped for water, slope, and offset types.
+- **StairTile**: procedural 4-step; `surfaceYAt` returns upper landing. Climb-axis alignment required (can't step off sideways).
+- **SlopeTile**: one procedural wedge per run (rendered on `slopePart: 0` only); length = `slopeSpan × TILE_SIZE`, height = `slopeRise × TILE_LEVEL_HEIGHT`. Palette from `surfaceType` via existing `TILE_PALETTES`. May step sideways off ramp onto flats (height rules only); stairs still axis-locked.
 - **Bridge ford** (`BP`/`BW` cells): `surfaceYOffset` lifts player only — not decorations (`walkSurfaceYAt` split).
+
+### Slope authoring (`testTileMap.js`)
+
+Place **one cell per row/col** along the climb axis; parts `0 … slopeSpan - 1`. All cells in a run share `level`, `rotation`, `slopeSpan`, `slopeRise`, `surfaceType`.
+
+```js
+// 2 levels over 4 tiles — rotation π climbs toward -Z (part 0 at highest gz)
+{ type: "slope", level: 1, rotation: Math.PI, slopePart: 0, slopeSpan: 4, slopeRise: 2, surfaceType: "grass" }
+```
+
+- `level` = walk height index at the **low** end.
+- Top landing flat tile: `level + slopeRise - 1` (flat walk height = `level + rise`).
+- Height math: `slopeHeightIndex` / `slopeProgress01` in `lib/world.js`; mesh offset via `slopeMeshWorldOffset`.
 
 ### Props & landmarks
 
@@ -326,32 +342,32 @@ walkSurfaceYAt(world, gx, gz)
 - **Landmarks:** train route `{ kind: "train", start, end, speed?, respawnMs? }`, konbini, etc. Tuned train numbers in `lib/trainRoute.js` only.
 - **Loader:** `EnvironmentModel` — `useGLTF`, foot-snap in `useMemo`, prefer `.glb`.
 - **Rails:** manual placement; straight segments spaced 4 cells (8 m). `railCrossing` uses `scale` 0.02 in component.
-- **Collision:** `decorationCollision.js` snaps footprints to 2 m grid. Dev overlay: `CollisionDebug`. Train has no collision.
+- **Collision:** `decorationCollision.js` builds world-space oriented boxes (OBBs) in meters; player uses circle-vs-OBB checks. Dev overlay: `CollisionDebug` (red boxes = truth). Train has no collision.
 
 ### Known world gaps
 
-- Decoration collision polish (railing thin footprints block whole tiles; possible same-cell pass-through in `canMoveTo`).
-- `decorationBlocked` rebuilt at module load — restart dev after registry edits.
+- Collision is built at module load (`world.collisionVolumes`) — restart dev after registry edits.
+- Slope GLB swap pending (rounded-edge wedge to match pedestal); procedural wedge is fine for MVP.
 - Stair GLB swap pending; tile InstancedMesh optimization (Phase 6) not started.
 
 ---
 
 ## Handoff — continue here
 
-**State (2026-06-24):** **D2 done** — `players.appearance` jsonb + `savePlayerAppearance()`; remote chibi looks + walk blend; `players.ry` yaw sync; `SYNC_MS = 200`. Chat: fresh session (no DB history on join). Existing projects: run migration helpers in `docs/supabase-setup.sql` (`appearance`, `ry` columns).
+**State (2026-06-25):** **Slopes done** — procedural `SlopeTile`; per-run `slopeSpan` / `slopeRise`; `slopeHeightIndex` walk Y; sideways exit onto flats (stairs still axis-locked). **PR 5b done** — OBB decoration collision (`collisionVolumes`). **D2 done** — `players.appearance` jsonb + remote chibi; `players.ry` yaw sync; `SYNC_MS = 200`. Chat: fresh session (no DB history on join).
 
 ### Next (priority order)
 
-1. **PR 5b** — decoration collision polish (`canMoveTo` same-cell pass-through, railings).
-2. **PR 8b** — guest emotes; remote stair pitch lean (optional polish).
-3. **Realtime efficiency** — if free-tier message quota bites, consider Broadcast for position or adaptive sync when idle.
+1. **PR 8b** — guest emotes; remote stair pitch lean (optional polish).
+2. **Realtime efficiency** — if free-tier message quota bites, consider Broadcast for position or adaptive sync when idle.
 
 ### Open bugs / traps
 
 - **Foot-snap:** must stay in `useMemo`, not `useLayoutEffect`.
 - **Bridge Y:** walk lift on `walkSurfaceYAt` only — `surfaceYOffset` on `surfaceYAt` moved bridge + cat together.
 - **Rail `gz`:** use `worldZToGridGz` (half-cell offset vs integer division).
-- **Collision:** white debug tiles sometimes passable; railings block full grid tiles in Z.
+- **Slope:** one mesh per run on `slopePart: 0`; `slopeSpan` / `slopeRise` must match across all parts in the run. Sideways step uses height delta (≤ 1 level/step), not climb-axis alignment.
+- **Collision:** use meter-sized OBB volumes (not grid tiles). Red debug boxes in `CollisionDebug` are the authoritative blocker.
 - **OAuth callback:** Supabase may return `#access_token=` hash — `finishAuthFromUrl()` handles both hash and `?code=`.
 - **Guest refresh:** always returns to login (intentional); clears anonymous session on load.
 - **Position upsert:** only `{ id, x, y, z, ry, last_seen }` — never include `display_name` or `appearance`.
@@ -361,7 +377,7 @@ walkSurfaceYAt(world, gx, gz)
 
 ### Deferred
 
-Surface footsteps by zone; diary/friend popups; second train; station hut re-wire; face UV-paint polish; remote position extrapolation.
+Surface footsteps by zone; diary/friend popups; second train; station hut re-wire; face UV-paint polish; remote position extrapolation; remote slope pitch lean.
 
 ---
 

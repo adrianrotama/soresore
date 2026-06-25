@@ -1,6 +1,7 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
+import * as THREE from "three";
 import { useMemo, useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import RemotePlayer from "@/component/RemotePlayer";
@@ -550,7 +551,10 @@ export default function Game() {
       )}
 
       {isPlaying && (
-        <Canvas shadows camera={{ position: [0, 2.5, 5], fov: 50 }}>
+        <Canvas
+          shadows={{ type: THREE.PCFShadowMap }}
+          camera={{ position: [0, 2.5, 5], fov: 50 }}
+        >
           <Environment />
           <World data={TEST_WORLD} positionRef={myPositionRef} />
           {useLegacyFollow ? (
