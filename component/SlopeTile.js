@@ -11,7 +11,7 @@ import { TILE_SIZE } from "@/lib/tileGrid";
 import { DEFAULT_SLOPE_RISE, DEFAULT_SLOPE_SPAN, TILE_LEVEL_HEIGHT } from "@/lib/world";
 
 /** Match pedestal width (GAME.md tile contract). */
-const FOOTPRINT = 2.082;
+const FOOTPRINT = 2.0;
 
 function makeWedgeGeometry(palette, span, rise) {
   const x = FOOTPRINT / 2;

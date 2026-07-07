@@ -38,7 +38,6 @@ const REVERSE_FACING_DOT = 0.25;
 const PLAYER_FOOT_OFFSET = 0.5;
 const GROUND_SNAP_RATE = 18;
 const STAIR_TILT_RATE = 14;
-const STAIR_TILT_ANGLE = Math.atan2(TILE_LEVEL_HEIGHT, TILE_SIZE);
 
 function isMovingKey(key) {
   return (
@@ -292,30 +291,10 @@ export default function LocalPlayer({
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    // Lean along the player's LOCAL forward axis (pitch), not world axes —
-    // so it always reads as "forward/back lean" no matter where they face.
-    // Euler order YXZ means rotation.x is applied AFTER yaw → local pitch.
-    if (mesh.rotation.order !== "YXZ") mesh.rotation.order = "YXZ";
-
-    let targetPitch = 0;
-    if (stairCell || isOnSlope) {
-      // Slope-up direction in world XZ (stair at rot=0 climbs toward +Z).
-      const upX = Math.sin(stairRot);
-      const upZ = Math.cos(stairRot);
-      // Player facing from current yaw (mesh default forward = -Z).
-      const yaw = mesh.rotation.y;
-      const fwdX = -Math.sin(yaw);
-      const fwdZ = -Math.cos(yaw);
-      // dot > 0 → facing uphill (lean forward); dot < 0 → downhill (lean back).
-      const dot = fwdX * upX + fwdZ * upZ;
-      targetPitch = STAIR_TILT_ANGLE * dot;
-    }
-    mesh.rotation.x +=
-      (targetPitch - mesh.rotation.x) * smoothRate(STAIR_TILT_RATE, delta);
-    if (mesh.rotation.z !== 0) {
-      mesh.rotation.z +=
-        (0 - mesh.rotation.z) * smoothRate(STAIR_TILT_RATE, delta);
-    }
+    // Keep the avatar upright on stairs/slopes (no pitch/roll lean).
+    // If any pitch/roll was left over (e.g. from older builds), ease it back to 0.
+    mesh.rotation.x += (0 - mesh.rotation.x) * smoothRate(STAIR_TILT_RATE, delta);
+    mesh.rotation.z += (0 - mesh.rotation.z) * smoothRate(STAIR_TILT_RATE, delta);
 
     const speed = Math.hypot(vel.x, vel.z);
 
@@ -331,9 +310,8 @@ export default function LocalPlayer({
     movePhaseRef.current += Math.PI * 2 * MOVE_BOB_HZ * delta;
     consumeStepTicks(movePhaseRef.current, lastStepIndexRef, moving01);
 
-    const idleBob = Math.sin(timeRef.current * Math.PI * 2 * IDLE_BOB_HZ) * IDLE_BOB_AMP;
     const moveBob = Math.sin(movePhaseRef.current) * MOVE_BOB_AMP * moving01;
-    const bobY = idleBob + moveBob;
+    const bobY = moveBob;
 
     // Squash when "step" hits (use cos so it's strongest at bob troughs).
     const squash =
