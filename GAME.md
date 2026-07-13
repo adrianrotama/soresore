@@ -28,7 +28,7 @@ Browser multiplayer 3D prototype. **One tab = one player** via Supabase auth (`s
 | Layer | Choice |
 |--------|--------|
 | Framework | Next.js 16 (App Router), React 19 |
-| 3D | Three.js, `@react-three/fiber`, `@react-three/drei` |
+| 3D | Three.js, `@react-three/fiber`, `@react-three/drei`, `@react-three/postprocessing` |
 | Backend | Supabase (Postgres + Realtime) |
 
 Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
@@ -67,7 +67,10 @@ component/NameTag.js              → display name above avatar (`Html`)
 component/NameTag.module.scss
 component/PlayerOrbitCamera.js → default orbit follow
 component/FollowCamera.js   → legacy fixed follow (dev toggle)
-component/Environment.js      → ground, fog, lights
+component/Environment.js      → sky dome, sun, clouds, fog, soft golden-hour lights; shadow frustum fit
+component/SkyGradient.js      → procedural orange→blue gradient sky (shader dome)
+component/Sun.js                → low-horizon billboard sun disc + halo
+component/Clouds.js             → drifting flat cloud billboards
 component/EnvironmentModel.js → GLB loader, foot-snap in useMemo
 component/GameAudio.js        → Web Audio unlock
 component/CollisionDebug.js   → dev collision wireframes
@@ -82,10 +85,12 @@ lib/world.js                  → surfaceYAt, walkSurfaceYAt, canMoveTo, slopeHe
 lib/decorationCollision.js    → world-space OBB collision volumes (meters)
 lib/tileGrid.js               → TILE_SIZE, gridToWorld, worldZToGridGz
 lib/tileModels.js             → TILE_PALETTES, TILE_MODEL_URLS, offsets
-lib/testTileMap.js            → 30×46 map layout
+lib/testTileMap.js            → 30×51 map layout
 lib/testWorld.js              → { map, origin, decorations, landmarks }
 lib/trainRoute.js             → train route constants (source of truth for tuned numbers)
 lib/environmentModels.js      → ENV_REGISTRY (url + collision per kind)
+lib/skyTextures.js            → procedural canvas textures (sun glow, cloud puff)
+lib/sunConfig.js              → `SUN_LIGHT_POSITION` shared by sun disc + directional light
 lib/interpolation.js          → lerpPosition (remotes)
 lib/gameAudio.js              → ambience + footstep ticks
 lib/supabase.js               → Supabase client; sessionStorage per tab; flowType pkce
@@ -228,6 +233,28 @@ Never bind mesh directly to `Game.js` `players` state.
 
 Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}`. `shadows={{ type: THREE.PCFShadowMap }}` (not `PCFSoftShadowMap` — deprecated in r184).
 
+**Post FX (`Game.js`):** subtle `Bloom` via `@react-three/postprocessing` — high `luminanceThreshold` so only the sun disc / bright highlights glow; toon tiles stay flat.
+
+---
+
+## Sky & atmosphere
+
+**Mount:** `Environment.js` inside `<Canvas>` (before `<World>`).
+
+| Piece | File | Notes |
+|--------|------|--------|
+| Gradient sky | `SkyGradient.js` | Inverted shader dome; `SKY_HORIZON` / `SKY_MID` / `SKY_ZENITH`; `SKY_CURVE` widens orange band |
+| Sun disc | `Sun.js` | Billboard + additive halo; `toneMapped={false}`; position from `sunVisualPosition()` |
+| Clouds | `Clouds.js` | Flat billboards, slow X drift; `CLOUD_PUFFS` table |
+| Textures | `lib/skyTextures.js` | Procedural canvas radial gradients (no image assets) |
+| Sun direction | `lib/sunConfig.js` | `SUN_LIGHT_POSITION` — shared by visible sun + shadow-casting directional light |
+
+**Lighting mood:** soft diffused golden hour — higher ambient/hemisphere fill, low-horizon warm sun directional, cool fill from opposite side. Fog color matches warm horizon haze (`#e3a377`).
+
+**Shadow frustum:** `Environment.js` fits the sun directional light's orthographic shadow camera to the map AABB (`WORLD_BOUNDS_MIN/MAX`) projected onto the light's forward/right/up axes — **not** a hand-picked world-space `±N` box. Low oblique sun tilts those axes; symmetric guesses clip one map side. **Do not clamp shadow `near` to a positive floor** — sun sits near/inside the bounds, so part of the map has negative forward distance; `OrthographicCamera` tolerates negative `near`.
+
+**Tuning:** sky colors/curve in `SkyGradient.js`; cloud density in `Clouds.js`; bloom in `Game.js`; sun angle in `lib/sunConfig.js`. Recompute `WORLD_BOUNDS_*` / `SUN_TARGET` if map footprint changes.
+
 ---
 
 ## Audio
@@ -354,12 +381,13 @@ Place **one cell per row/col** along the climb axis; parts `0 … slopeSpan - 1`
 
 ## Handoff — continue here
 
-**State (2026-06-25):** **Slopes done** — procedural `SlopeTile`; per-run `slopeSpan` / `slopeRise`; `slopeHeightIndex` walk Y; sideways exit onto flats (stairs still axis-locked). **PR 5b done** — OBB decoration collision (`collisionVolumes`). **D2 done** — `players.appearance` jsonb + remote chibi; `players.ry` yaw sync; `SYNC_MS = 200`. Chat: fresh session (no DB history on join).
+**State (2026-07-13):** **Sky/atmosphere pass** — procedural gradient dome (`SkyGradient`), low-horizon sun disc + halo (`Sun`), drifting cloud billboards (`Clouds`), soft golden-hour lighting + warm fog. Subtle bloom on sun highlights (`@react-three/postprocessing`). Sun shadow frustum auto-fitted to map AABB in light view space (fixes partial-map shadow clipping). **Slopes / OBB collision / D2 / chat** unchanged from prior handoff.
 
 ### Next (priority order)
 
-1. **PR 8b** — guest emotes; remote stair pitch lean (optional polish).
-2. **Realtime efficiency** — if free-tier message quota bites, consider Broadcast for position or adaptive sync when idle.
+1. **Toon-convert environment props** — `EnvironmentModel` still loads raw GLB materials; tiles/avatars use `MeshToonMaterial` (visual cohesion).
+2. **PR 8b** — guest emotes; remote stair pitch lean (optional polish).
+3. **Realtime efficiency** — if free-tier message quota bites, consider Broadcast for position or adaptive sync when idle.
 
 ### Open bugs / traps
 
@@ -373,6 +401,8 @@ Place **one cell per row/col** along the climb axis; parts `0 … slopeSpan - 1`
 - **Position upsert:** only `{ id, x, y, z, ry, last_seen }` — never include `display_name` or `appearance`.
 - **Chat Html:** bubble/name tag need `width: max-content` — do not remove.
 - **Chat panel:** collapsed log uses `slice(-2)` — do not rely on scroll position when unfocused.
+- **Sky gradient:** use view elevation `max(vWorldDir.y, 0)` — do not remap with `(y * 0.5 + 0.5)` (puts orange below horizon); never `discard` below horizon (exposes mismatched canvas color).
+- **Sun shadows:** fit frustum in light view space; do not clamp orthographic `near` to `0.1` when sun is inside/near map bounds.
 - **eslint:** `react-hooks/refs`, `immutability`, `set-state-in-effect` off in `eslint.config.mjs` for r3f `useFrame` patterns.
 
 ### Deferred

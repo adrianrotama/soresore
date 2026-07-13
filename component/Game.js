@@ -1,6 +1,7 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { useMemo, useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
@@ -601,6 +602,16 @@ export default function Game() {
               );
             })()
           ))}
+
+          {/* Subtle bloom — catches the sun disc + lantern glow; toon shading stays flat. */}
+          <EffectComposer multisampling={0}>
+            <Bloom
+              intensity={0.45}
+              luminanceThreshold={0.72}
+              luminanceSmoothing={0.25}
+              mipmapBlur
+            />
+          </EffectComposer>
         </Canvas>
       )}
 

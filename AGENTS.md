@@ -42,7 +42,6 @@ stylized
 Environment
 1 station area
 1 riverside
-1 rooftop
 1 minimarket
 
 Avatar
