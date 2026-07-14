@@ -11,7 +11,7 @@
 
 - **Cozy direction wins (`AGENTS.md`).** ACNH-inspired pedestal silhouette, sunset palette, stable camera. Challenge requests that hurt comfort or cozy feel.
 - **Tile pedestal is the world unit anchor.** `TILE_SIZE = 2` m XZ; `TILE_LEVEL_HEIGHT = 1.0` m Y; mesh footprint **2.082 m**. Scale assets to the grid, not the reverse.
-- **One pedestal GLB; palette via vertex-color repaint** (`TileModel`). New tile **type** → `TILE_PALETTES`. New tile **shape** (water, brick) → `TILE_MODEL_URLS` in `lib/tileModels.js`. **Slope** = procedural wedge (`SlopeTile.js`), not a GLB yet.
+- **One pedestal GLB; palette via vertex-color repaint** (`TileModel`). New tile **type** → `TILE_PALETTES`. New tile **shape** (brick) → `TILE_MODEL_URLS` in `lib/tileModels.js`. **Water** → `WaterTile` + `lib/waterMaterial.js` (not the water GLB at runtime). **Slope** = procedural wedge (`SlopeTile.js`), not a GLB yet.
 - **Default tiles: no PBR.** `MeshToonMaterial` + vertex colors. Exception: `TILE_NATIVE_COLOR` types keep authored GLB colors (still toon).
 - **Ground Y:** `surfaceYAt` = tile top (decorations). `walkSurfaceYAt` = player snap (+ `cell.surfaceYOffset`). Never hard-code Y for tile content.
 - **Decoration vs Landmark.** Grid props → `Decoration.js` (`{ kind, gx, gz }`). World structures → `Landmark.js` (`{ kind, … }`).
@@ -45,8 +45,9 @@ component/LoginScreen.js    → Google + Continue as guest (ACNH overlay)
 component/NameModal.js      → one-time unique display_name (logged-in only)
 component/OnboardingShell.module.scss → shared sunset/CRT modal styles
 component/World.js          → TileMap + Decoration[] + Landmark[]; dev CollisionDebug
-component/TileMap.js        → 2D map → <TileModel>; cliff TileBank
+component/TileMap.js        → 2D map → TileModel / Stairs / Slopes / WaterTile; cliff TileBank; shore-depth bake
 component/TileModel.js      → tile GLB; palette repaint or nativeColor; foot-snap in useMemo
+component/WaterTile.js      → stylized water plane + optional seabed; WaterClock drives shared uTime
 component/StairTile.js      → procedural 4-step stair
 component/SlopeTile.js    → procedural multi-tile wedge ramp
 component/Decoration.js     → grid prop registry (PROP_COMPONENTS)
@@ -67,10 +68,11 @@ component/NameTag.js              → display name above avatar (`Html`)
 component/NameTag.module.scss
 component/PlayerOrbitCamera.js → default orbit follow
 component/FollowCamera.js   → legacy fixed follow (dev toggle)
-component/Environment.js      → sky dome, sun, clouds, fog, soft golden-hour lights; shadow frustum fit
+component/Environment.js      → sky, sun, clouds, cloud-sea, fog, lights; shadow frustum from mapBounds
 component/SkyGradient.js      → procedural orange→blue gradient sky (shader dome)
 component/Sun.js                → low-horizon billboard sun disc + halo
 component/Clouds.js             → drifting flat cloud billboards
+component/CloudSea.js           → horizontal mist field below the map (over-the-edge soft void fill)
 component/EnvironmentModel.js → GLB loader, foot-snap in useMemo
 component/GameAudio.js        → Web Audio unlock
 component/CollisionDebug.js   → dev collision wireframes
@@ -89,6 +91,9 @@ lib/testTileMap.js            → 30×51 map layout
 lib/testWorld.js              → { map, origin, decorations, landmarks }
 lib/trainRoute.js             → train route constants (source of truth for tuned numbers)
 lib/environmentModels.js      → ENV_REGISTRY (url + collision per kind)
+lib/mapBounds.js              → WORLD_BOUNDS_MIN/MAX, WORLD_CENTER, WORLD_SIZE (shadow + atmos footprint)
+lib/shoreDepth.js             → BFS shore-distance DataTexture; isSeaWater (level ≤ -2)
+lib/waterMaterial.js          → shared water / foam / seabed ShaderMaterials + setWaterDepthField
 lib/skyTextures.js            → procedural canvas textures (sun glow, cloud puff)
 lib/sunConfig.js              → `SUN_LIGHT_POSITION` shared by sun disc + directional light
 lib/interpolation.js          → lerpPosition (remotes)
@@ -233,7 +238,7 @@ Never bind mesh directly to `Game.js` `players` state.
 
 Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}`. `shadows={{ type: THREE.PCFShadowMap }}` (not `PCFSoftShadowMap` — deprecated in r184).
 
-**Post FX (`Game.js`):** subtle `Bloom` via `@react-three/postprocessing` — high `luminanceThreshold` so only the sun disc / bright highlights glow; toon tiles stay flat.
+**Post FX (`Game.js`):** subtle `Bloom` + soft `Vignette` via `@react-three/postprocessing` — bloom `luminanceThreshold` high so only the sun disc / bright highlights glow; toon tiles stay flat.
 
 ---
 
@@ -246,14 +251,16 @@ Canvas: `camera={{ position: [0, 2.5, 5], fov: 50 }}`. `shadows={{ type: THREE.P
 | Gradient sky | `SkyGradient.js` | Inverted shader dome; `SKY_HORIZON` / `SKY_MID` / `SKY_ZENITH`; `SKY_CURVE` widens orange band |
 | Sun disc | `Sun.js` | Billboard + additive halo; `toneMapped={false}`; position from `sunVisualPosition()` |
 | Clouds | `Clouds.js` | Flat billboards, slow X drift; `CLOUD_PUFFS` table |
+| Cloud sea | `CloudSea.js` | Horizontal mist billboards below the map; softens over-the-edge void |
 | Textures | `lib/skyTextures.js` | Procedural canvas radial gradients (no image assets) |
 | Sun direction | `lib/sunConfig.js` | `SUN_LIGHT_POSITION` — shared by visible sun + shadow-casting directional light |
+| Map footprint | `lib/mapBounds.js` | `WORLD_BOUNDS_*` / `WORLD_CENTER` / `WORLD_SIZE` — shared by shadow frustum + atmos |
 
 **Lighting mood:** soft diffused golden hour — higher ambient/hemisphere fill, low-horizon warm sun directional, cool fill from opposite side. Fog color matches warm horizon haze (`#e3a377`).
 
-**Shadow frustum:** `Environment.js` fits the sun directional light's orthographic shadow camera to the map AABB (`WORLD_BOUNDS_MIN/MAX`) projected onto the light's forward/right/up axes — **not** a hand-picked world-space `±N` box. Low oblique sun tilts those axes; symmetric guesses clip one map side. **Do not clamp shadow `near` to a positive floor** — sun sits near/inside the bounds, so part of the map has negative forward distance; `OrthographicCamera` tolerates negative `near`.
+**Shadow frustum:** `Environment.js` fits the sun directional light's orthographic shadow camera to the map AABB (`WORLD_BOUNDS_MIN/MAX` from `mapBounds.js`) projected onto the light's forward/right/up axes — **not** a hand-picked world-space `±N` box. Low oblique sun tilts those axes; symmetric guesses clip one map side. **Do not clamp shadow `near` to a positive floor** — sun sits near/inside the bounds, so part of the map has negative forward distance; `OrthographicCamera` tolerates negative `near`.
 
-**Tuning:** sky colors/curve in `SkyGradient.js`; cloud density in `Clouds.js`; bloom in `Game.js`; sun angle in `lib/sunConfig.js`. Recompute `WORLD_BOUNDS_*` / `SUN_TARGET` if map footprint changes.
+**Tuning:** sky colors/curve in `SkyGradient.js`; cloud density in `Clouds.js`; bloom/vignette in `Game.js`; sun angle in `lib/sunConfig.js`. Recompute `WORLD_BOUNDS_*` / `SUN_TARGET` if map footprint changes.
 
 ---
 
@@ -344,11 +351,23 @@ walkSurfaceYAt(world, gx, gz)
 ### Tile system
 
 - Standard pedestal: 2.082 × 2.082 × 1.0 m, vertex-color repaint via `TILE_PALETTES`.
-- **brick** / **water**: dedicated GLBs, `TILE_NATIVE_COLOR`, Y offsets in `tileModels.js`. Water non-walkable.
+- **brick**: dedicated GLB, `TILE_NATIVE_COLOR`, Y offset in `tileModels.js`.
+- **water**: **not** the water GLB at runtime — `WaterTile` procedural planes via shared `ShaderMaterial`s in `lib/waterMaterial.js` (waves, ripples, sun glitter, foam). Surface Y = tile top of `cell.level`. Non-walkable by default; bridge fords still use `walkable: true` + `surfaceYOffset`.
+- **Shore depth:** `lib/shoreDepth.js` bakes a BFS shore-distance `DataTexture` (0 = shore, 1 = deep). `TileMap` calls `setWaterDepthField` once per map. Open sea (`isSeaWater`: `type === "water"` and `level ≤ -2`) gets a sloped sandy seabed + clear→opaque alpha so sand shows in shallows. **River** water is forced depth = 1 (opaque teal, **no seabed**).
 - **TileBank**: cliff plug under cells; skipped for water, slope, and offset types.
 - **StairTile**: procedural 4-step; `surfaceYAt` returns upper landing. Climb-axis alignment required (can't step off sideways).
 - **SlopeTile**: one procedural wedge per run (rendered on `slopePart: 0` only); length = `slopeSpan × TILE_SIZE`, height = `slopeRise × TILE_LEVEL_HEIGHT`. Palette from `surfaceType` via existing `TILE_PALETTES`. May step sideways off ramp onto flats (height rules only); stairs still axis-locked.
 - **Bridge ford** (`BP`/`BW` cells): `surfaceYOffset` lifts player only — not decorations (`walkSurfaceYAt` split).
+
+### Water tuning
+
+| Knob | Where | Notes |
+|------|--------|--------|
+| Shallow band width | `MAX_SHORE_CELLS` in `shoreDepth.js` | ~4 cells shore→deep |
+| Water alpha | `waterMaterial.js` fragment | `mix(0.22, 0.95, depth)` — sea only (river forced deep) |
+| Seabed dip | `SEABED_DIP` in `waterMaterial.js` | ~1.4 m down when deep |
+| Sand colors | `SAND_SHORE` / `SAND_DEEP` | Matches sand tile palette feel |
+| Fog match | `FOG_*` in `waterMaterial.js` | Keep in sync with `Environment.js` fog |
 
 ### Slope authoring (`testTileMap.js`)
 
@@ -381,7 +400,7 @@ Place **one cell per row/col** along the climb axis; parts `0 … slopeSpan - 1`
 
 ## Handoff — continue here
 
-**State (2026-07-13):** **Sky/atmosphere pass** — procedural gradient dome (`SkyGradient`), low-horizon sun disc + halo (`Sun`), drifting cloud billboards (`Clouds`), soft golden-hour lighting + warm fog. Subtle bloom on sun highlights (`@react-three/postprocessing`). Sun shadow frustum auto-fitted to map AABB in light view space (fixes partial-map shadow clipping). **Slopes / OBB collision / D2 / chat** unchanged from prior handoff.
+**State (2026-07-14):** **Stylized water + edge atmos** — `WaterTile` + shared toon water/foam shaders; sea gets shore-distance sandy seabed (shallow→deep); river opaque (no sand). `CloudSea` under the map softens the slab edge. Subtle vignette with existing bloom. Bounds extracted to `lib/mapBounds.js` for shadow frustum. **Sky / slopes / OBB / D2 / chat** otherwise unchanged.
 
 ### Next (priority order)
 
@@ -403,6 +422,7 @@ Place **one cell per row/col** along the climb axis; parts `0 … slopeSpan - 1`
 - **Chat panel:** collapsed log uses `slice(-2)` — do not rely on scroll position when unfocused.
 - **Sky gradient:** use view elevation `max(vWorldDir.y, 0)` — do not remap with `(y * 0.5 + 0.5)` (puts orange below horizon); never `discard` below horizon (exposes mismatched canvas color).
 - **Sun shadows:** fit frustum in light view space; do not clamp orthographic `near` to `0.1` when sun is inside/near map bounds.
+- **Water:** do not reintroduce a drifting sine color band for base water (reads as unnatural "spotlights"). Sea = `level ≤ -2`; river must stay forced-opaque / no seabed unless intentionally changed. Keep `waterMaterial.js` fog constants matched to `Environment.js`.
 - **eslint:** `react-hooks/refs`, `immutability`, `set-state-in-effect` off in `eslint.config.mjs` for r3f `useFrame` patterns.
 
 ### Deferred

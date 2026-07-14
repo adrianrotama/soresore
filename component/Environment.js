@@ -5,16 +5,11 @@ import { Object3D, Vector3 } from "three";
 import SkyGradient, { SKY_HORIZON } from "@/component/SkyGradient";
 import Sun from "@/component/Sun";
 import Clouds from "@/component/Clouds";
+import CloudSea from "@/component/CloudSea";
+import DioramaBase from "@/component/DioramaBase";
 import { SUN_LIGHT_POSITION } from "@/lib/sunConfig";
+import { WORLD_BOUNDS_MIN, WORLD_BOUNDS_MAX } from "@/lib/mapBounds";
 
-/**
- * World map footprint (lib/testTileMap.js: 30 cols x 51 rows, origin
- * [-10,0,-20]) padded on Y for the tallest tiles/decorations (elevated G5
- * grass ~5m, konbini, lanterns, trees). Recompute if the map footprint
- * or tallest prop changes.
- */
-const WORLD_BOUNDS_MIN = new Vector3(-9, -4, -19);
-const WORLD_BOUNDS_MAX = new Vector3(49, 10, 81);
 const SUN_TARGET = new Vector3(20, 0, 31);
 const SUN_POSITION = new Vector3(...SUN_LIGHT_POSITION);
 
@@ -127,6 +122,7 @@ export default function Environment() {
       <SkyGradient />
       <Sun />
       <Clouds />
+      <CloudSea />
 
       <ambientLight color={AMBIENT_COLOR} intensity={0.56} />
 

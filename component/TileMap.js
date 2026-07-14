@@ -1,11 +1,14 @@
 "use client";
 
-import { Fragment, Suspense } from "react";
+import { Fragment, Suspense, useMemo } from "react";
 import { useGLTF } from "@react-three/drei";
 import TileModel from "@/component/TileModel";
 import StairTile from "@/component/StairTile";
 import SlopeTile from "@/component/SlopeTile";
+import WaterTile, { WaterClock } from "@/component/WaterTile";
+import { buildShoreDepthTexture, isSeaWater } from "@/lib/shoreDepth";
 import { gridToWorld } from "@/lib/tileGrid";
+import { setWaterDepthField } from "@/lib/waterMaterial";
 import {
   PEDESTAL_TILE_URL,
   BRICK_TILE_URL,
@@ -34,6 +37,30 @@ function paletteFor(tileType) {
   return TILE_PALETTES[tileType] ?? TILE_PALETTES[DEFAULT_TILE_KEY];
 }
 
+/** True when the cell at (gx, gz) exists and is water. */
+function isWaterAt(map, gx, gz) {
+  const cell = normalizeCell(map[gz]?.[gx]);
+  return cell?.type === "water";
+}
+
+/**
+ * Foam sits on any side facing a non-water neighbor (a shoreline). Sides that
+ * face another water cell — or the open map edge (out of bounds) — get none,
+ * so the open sea reads as endless rather than fenced in foam.
+ */
+function foamEdgesFor(map, gx, gz) {
+  const shore = (nx, nz) => {
+    if (map[nz]?.[nx] == null) return false; // map edge / open sea
+    return !isWaterAt(map, nx, nz);
+  };
+  return {
+    n: shore(gx, gz - 1),
+    s: shore(gx, gz + 1),
+    e: shore(gx + 1, gz),
+    w: shore(gx - 1, gz),
+  };
+}
+
 /**
  * Square "cliff face" block painted in the side color. Plugs the rounded
  * pedestal seam at every level transition — pedestals curve inward at top/bottom
@@ -49,8 +76,15 @@ function TileBank({ color, position, height }) {
 }
 
 function TileMapInner({ map, origin = [0, 0, 0] }) {
+  useMemo(() => {
+    const field = buildShoreDepthTexture(map);
+    setWaterDepthField(field);
+    return field;
+  }, [map]);
+
   return (
     <group name="tile-map">
+      <WaterClock />
       {map.map((row, gz) =>
         row.map((rawCell, gx) => {
           const cell = normalizeCell(rawCell);
@@ -106,6 +140,20 @@ function TileMapInner({ map, origin = [0, 0, 0] }) {
                 rotation={cell.rotation}
                 span={slopeSpanOf(cell)}
                 rise={slopeRiseOf(cell)}
+              />
+            );
+          }
+          if (cell.type === "water") {
+            // Water surface aligns with the tile top of its level (matches sand
+            // shorelines). Foam only on sides that meet land. Sandy seabed is
+            // sea-only (level ≤ -2); river stays opaque teal.
+            const surfaceY = baseY + (cell.level + 1) * TILE_LEVEL_HEIGHT;
+            return (
+              <WaterTile
+                key={key}
+                position={[wx, surfaceY, wz]}
+                foamEdges={foamEdgesFor(map, gx, gz)}
+                showSeabed={isSeaWater(cell)}
               />
             );
           }

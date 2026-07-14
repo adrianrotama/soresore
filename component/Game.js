@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas } from "@react-three/fiber";
-import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { useMemo, useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
@@ -611,6 +611,9 @@ export default function Game() {
               luminanceSmoothing={0.25}
               mipmapBlur
             />
+            {/* Subtle frame — draws the eye inward and softens where the
+                diorama slab meets the sky at the screen periphery. */}
+            <Vignette eskil={false} offset={0.3} darkness={0.35} />
           </EffectComposer>
         </Canvas>
       )}
